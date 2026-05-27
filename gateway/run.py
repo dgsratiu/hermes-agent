@@ -1174,9 +1174,24 @@ def _build_media_placeholder(event) -> str:
     parts = []
     media_urls = getattr(event, "media_urls", None) or []
     media_types = getattr(event, "media_types", None) or []
+    artifacts_by_path = {
+        artifact.get("path"): artifact
+        for artifact in (getattr(event, "stored_artifacts", None) or [])
+        if isinstance(artifact, dict) and artifact.get("path")
+    }
     for i, url in enumerate(media_urls):
         mtype = media_types[i] if i < len(media_types) else ""
-        if mtype.startswith("image/") or getattr(event, "message_type", None) == MessageType.PHOTO:
+        artifact_kind = str((artifacts_by_path.get(url) or {}).get("kind") or "").lower()
+        if (
+            artifact_kind == "video"
+            or mtype.startswith("video/")
+            or getattr(event, "message_type", None) == MessageType.VIDEO
+        ):
+            parts.append(f"[User sent a video: {url}]")
+        elif artifact_kind == "image" or (
+            mtype.startswith("image/")
+            and getattr(event, "message_type", None) != MessageType.VIDEO
+        ) or getattr(event, "message_type", None) == MessageType.PHOTO:
             parts.append(f"[User sent an image: {url}]")
         elif mtype.startswith("audio/"):
             parts.append(f"[User sent audio: {url}]")
@@ -7954,18 +7969,38 @@ class GatewayRunner:
         # Declare at outer scope so the audio-file-paths handling block below
         # remains safe when ``event.media_urls`` is empty (no inner block runs).
         audio_file_paths: list[str] = []
+        video_file_paths: list[str] = []
+        artifacts_by_path = {
+            artifact.get("path"): artifact
+            for artifact in (getattr(event, "stored_artifacts", None) or [])
+            if isinstance(artifact, dict) and artifact.get("path")
+        }
 
         if event.media_urls:
             image_paths = []
             audio_paths = []
             for i, path in enumerate(event.media_urls):
                 mtype = event.media_types[i] if i < len(event.media_types) else ""
-                if mtype.startswith("image/") or event.message_type == MessageType.PHOTO:
+                artifact = artifacts_by_path.get(path) or {}
+                artifact_kind = str(artifact.get("kind") or "").lower()
+                if (
+                    artifact_kind == "video"
+                    or mtype.startswith("video/")
+                    or event.message_type == MessageType.VIDEO
+                ):
+                    video_file_paths.append(path)
+                    continue
+                if artifact_kind == "image" or (
+                    mtype.startswith("image/")
+                    and event.message_type != MessageType.VIDEO
+                ) or event.message_type == MessageType.PHOTO:
                     image_paths.append(path)
+                    continue
                 # MessageType.AUDIO = audio file attachment (e.g. .mp3, .m4a) — never STT
                 # MessageType.VOICE = voice message (Opus/OGG) — always STT
                 if event.message_type == MessageType.AUDIO:
                     audio_file_paths.append(path)
+                    continue
                 elif event.message_type == MessageType.VOICE or (
                     mtype.startswith("audio/")
                     and event.message_type not in {MessageType.AUDIO, MessageType.DOCUMENT}
@@ -8043,6 +8078,25 @@ class GatewayRunner:
                     f"[The user sent an audio file attachment: '{_display}'. "
                     f"It is saved at: {_agent_path}. "
                     f"Ask the user what they'd like you to do with it, or pass the path to a transcription or media tool.]"
+                )
+                message_text = f"{_note}\n\n{message_text}"
+
+        if video_file_paths:
+            from tools.credential_files import to_agent_visible_cache_path as _to_agent_path
+            for _vpath in video_file_paths:
+                _artifact = artifacts_by_path.get(_vpath) or {}
+                _basename = os.path.basename(_vpath)
+                _parts = _basename.split("_", 2)
+                _display = _parts[2] if len(_parts) >= 3 else _basename
+                _display = re.sub(r'[^\w.\- ]', '_', _display)
+                _agent_path = _to_agent_path(_vpath)
+                _media_type = str(_artifact.get("media_type") or "").strip()
+                _mime_note = f" ({_media_type})" if _media_type else ""
+                _note = (
+                    f"[The user sent a video attachment{_mime_note}: '{_display}'. "
+                    f"It is saved at: {_agent_path}. "
+                    f"Treat this as a video file, not as an image or screenshot. "
+                    f"Ask the user what they'd like you to do with it, or pass the path to a video/media tool.]"
                 )
                 message_text = f"{_note}\n\n{message_text}"
 

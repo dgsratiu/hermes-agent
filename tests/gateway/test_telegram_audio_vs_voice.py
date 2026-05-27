@@ -53,6 +53,25 @@ def _audio_event(path: str = "/tmp/song.mp3") -> MessageEvent:
     )
 
 
+def _video_event(path: str = "/tmp/video_c8314e1e0f31.mp4", media_type: str = "video/mp4") -> MessageEvent:
+    return MessageEvent(
+        text="",
+        message_type=MessageType.VIDEO,
+        source=SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm"),
+        media_urls=[path],
+        media_types=[media_type],
+        stored_artifacts=[
+            {
+                "kind": "video",
+                "media_type": media_type,
+                "path": path,
+                "bytes": 123,
+                "content_hash": "sha256",
+            }
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. VOICE still goes through STT
 # ---------------------------------------------------------------------------
@@ -165,6 +184,69 @@ async def test_audio_attachment_skips_stt_when_stt_disabled():
     assert "transcription is disabled" not in result.lower()
     assert "audio file attachment" in result.lower()
     assert "/tmp/podcast.m4a" in result
+
+
+@pytest.mark.asyncio
+async def test_video_attachment_gets_video_context_note_not_image_analysis():
+    """Video attachments should be surfaced as videos, not screenshots/images."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = _video_event("/tmp/video_c8314e1e0f31.mp4")
+
+    with patch(
+        "tools.vision_tools.vision_analyze_tool",
+        side_effect=AssertionError("video must not be sent to image analysis"),
+    ):
+        with patch(
+            "tools.credential_files.to_agent_visible_cache_path",
+            side_effect=lambda p: p,
+        ):
+            result = await runner._prepare_inbound_message_text(
+                event=event,
+                source=source,
+                history=[],
+            )
+
+    assert "video attachment" in result.lower()
+    assert "/tmp/video_c8314e1e0f31.mp4" in result
+    assert "not as an image or screenshot" in result
+
+
+@pytest.mark.asyncio
+async def test_animation_gif_artifact_stays_video_in_prompt():
+    """Telegram animation artifacts may have image/gif MIME but video kind."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = _video_event("/tmp/video_cache/video_abc123.gif", media_type="image/gif")
+
+    with patch(
+        "tools.vision_tools.vision_analyze_tool",
+        side_effect=AssertionError("animation must not be sent to image analysis"),
+    ):
+        with patch(
+            "tools.credential_files.to_agent_visible_cache_path",
+            side_effect=lambda p: p,
+        ):
+            result = await runner._prepare_inbound_message_text(
+                event=event,
+                source=source,
+                history=[],
+            )
+
+    assert "video attachment (image/gif)" in result
+    assert "image:" not in result.lower()
+    assert "screenshot" in result
+
+
+def test_video_media_placeholder_uses_video_label_for_queued_turns():
+    from gateway.run import _build_media_placeholder
+
+    event = _video_event("/tmp/video_cache/video_abc123.gif", media_type="image/gif")
+
+    placeholder = _build_media_placeholder(event)
+
+    assert placeholder == "[User sent a video: /tmp/video_cache/video_abc123.gif]"
+    assert "image" not in placeholder.lower()
 
 
 # ---------------------------------------------------------------------------

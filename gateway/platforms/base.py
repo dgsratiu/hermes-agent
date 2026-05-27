@@ -1174,6 +1174,10 @@ class MessageEvent:
     # media_urls: local file paths (for vision tool access)
     media_urls: List[str] = field(default_factory=list)
     media_types: List[str] = field(default_factory=list)
+    # Structured metadata for platform-downloaded attachments.  media_urls and
+    # media_types are legacy parallel lists; stored_artifacts is authoritative
+    # when prompt construction needs to distinguish image/video/document kinds.
+    stored_artifacts: List[Dict[str, Any]] = field(default_factory=list)
     
     # Reply context
     reply_to_message_id: Optional[str] = None
@@ -1356,6 +1360,7 @@ def merge_pending_message_event(
         if existing_is_photo and incoming_is_photo:
             existing.media_urls.extend(event.media_urls)
             existing.media_types.extend(event.media_types)
+            existing.stored_artifacts.extend(event.stored_artifacts)
             if event.text:
                 existing.text = BasePlatformAdapter._merge_caption(existing.text, event.text)
             return
@@ -1364,6 +1369,7 @@ def merge_pending_message_event(
             if incoming_has_media:
                 existing.media_urls.extend(event.media_urls)
                 existing.media_types.extend(event.media_types)
+                existing.stored_artifacts.extend(event.stored_artifacts)
             if event.text:
                 if existing.text:
                     existing.text = BasePlatformAdapter._merge_caption(existing.text, event.text)

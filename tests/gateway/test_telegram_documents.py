@@ -9,6 +9,7 @@ We mock the telegram module at import time to avoid collection errors.
 """
 
 import asyncio
+import hashlib
 import importlib
 import os
 import sys
@@ -93,6 +94,8 @@ def _make_message(document=None, caption=None, media_group_id=None, photo=None):
     # Media flags — all None except explicit payload
     msg.photo = photo
     msg.video = None
+    msg.animation = None
+    msg.video_note = None
     msg.audio = None
     msg.voice = None
     msg.sticker = None
@@ -118,10 +121,22 @@ def _make_update(msg):
     return update
 
 
-def _make_video(file_obj=None):
+def _make_video(file_obj=None, file_name=None, mime_type=None):
     video = MagicMock()
     video.get_file = AsyncMock(return_value=file_obj or _make_file_obj(b"video-bytes"))
+    video.file_name = file_name
+    video.mime_type = mime_type
     return video
+
+
+def _assert_single_stored_artifact(event, *, kind, media_type, data):
+    assert len(event.stored_artifacts) == 1
+    artifact = event.stored_artifacts[0]
+    assert artifact["kind"] == kind
+    assert artifact["media_type"] == media_type
+    assert artifact["path"] == event.media_urls[0]
+    assert artifact["bytes"] == len(data)
+    assert artifact["content_hash"] == hashlib.sha256(data).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +418,8 @@ class TestDocumentDownloadBlock:
 class TestVideoDownloadBlock:
     @pytest.mark.asyncio
     async def test_native_video_is_cached(self, adapter):
-        file_obj = _make_file_obj(b"fake-mp4")
+        payload = b"fake-mp4"
+        file_obj = _make_file_obj(payload)
         file_obj.file_path = "videos/clip.mp4"
         msg = _make_message()
         msg.video = _make_video(file_obj)
@@ -414,11 +430,19 @@ class TestVideoDownloadBlock:
         assert event.message_type == MessageType.VIDEO
         assert len(event.media_urls) == 1
         assert os.path.exists(event.media_urls[0])
+        assert event.media_urls[0].endswith(".mp4")
         assert event.media_types == [SUPPORTED_VIDEO_TYPES[".mp4"]]
+        _assert_single_stored_artifact(
+            event,
+            kind="video",
+            media_type=SUPPORTED_VIDEO_TYPES[".mp4"],
+            data=payload,
+        )
 
     @pytest.mark.asyncio
     async def test_mp4_document_is_treated_as_video(self, adapter):
-        file_obj = _make_file_obj(b"fake-mp4-doc")
+        payload = b"fake-mp4-doc"
+        file_obj = _make_file_obj(payload)
         doc = _make_document(file_name="good.mp4", mime_type="video/mp4", file_size=1024, file_obj=file_obj)
         msg = _make_message(document=doc)
         update = _make_update(msg)
@@ -428,7 +452,79 @@ class TestVideoDownloadBlock:
         assert event.message_type == MessageType.VIDEO
         assert len(event.media_urls) == 1
         assert os.path.exists(event.media_urls[0])
+        assert event.media_urls[0].endswith(".mp4")
         assert event.media_types == [SUPPORTED_VIDEO_TYPES[".mp4"]]
+        _assert_single_stored_artifact(
+            event,
+            kind="video",
+            media_type=SUPPORTED_VIDEO_TYPES[".mp4"],
+            data=payload,
+        )
+
+    @pytest.mark.asyncio
+    async def test_video_document_without_filename_uses_video_mime(self, adapter):
+        payload = b"fake-mp4-doc-mime"
+        file_obj = _make_file_obj(payload)
+        doc = _make_document(file_name=None, mime_type="video/mp4", file_size=1024, file_obj=file_obj)
+        msg = _make_message(document=doc)
+        update = _make_update(msg)
+
+        await adapter._handle_media_message(update, MagicMock())
+        event = adapter.handle_message.call_args[0][0]
+        assert event.message_type == MessageType.VIDEO
+        assert len(event.media_urls) == 1
+        assert event.media_urls[0].endswith(".mp4")
+        assert event.media_types == ["video/mp4"]
+        _assert_single_stored_artifact(
+            event,
+            kind="video",
+            media_type="video/mp4",
+            data=payload,
+        )
+
+    @pytest.mark.asyncio
+    async def test_animation_is_cached_as_video_artifact(self, adapter):
+        payload = b"gif-bytes"
+        file_obj = _make_file_obj(payload)
+        file_obj.file_path = "animations/fun.gif"
+        msg = _make_message()
+        msg.animation = _make_video(file_obj, file_name="fun.gif", mime_type="image/gif")
+        update = _make_update(msg)
+
+        await adapter._handle_media_message(update, MagicMock())
+        event = adapter.handle_message.call_args[0][0]
+        assert event.message_type == MessageType.VIDEO
+        assert len(event.media_urls) == 1
+        assert event.media_urls[0].endswith(".gif")
+        assert event.media_types == ["image/gif"]
+        _assert_single_stored_artifact(
+            event,
+            kind="video",
+            media_type="image/gif",
+            data=payload,
+        )
+
+    @pytest.mark.asyncio
+    async def test_video_note_is_cached_as_video_artifact(self, adapter):
+        payload = b"round-video"
+        file_obj = _make_file_obj(payload)
+        file_obj.file_path = "video_notes/round.mp4"
+        msg = _make_message()
+        msg.video_note = _make_video(file_obj)
+        update = _make_update(msg)
+
+        await adapter._handle_media_message(update, MagicMock())
+        event = adapter.handle_message.call_args[0][0]
+        assert event.message_type == MessageType.VIDEO
+        assert len(event.media_urls) == 1
+        assert event.media_urls[0].endswith(".mp4")
+        assert event.media_types == ["video/mp4"]
+        _assert_single_stored_artifact(
+            event,
+            kind="video",
+            media_type="video/mp4",
+            data=payload,
+        )
 
 
 # ---------------------------------------------------------------------------
