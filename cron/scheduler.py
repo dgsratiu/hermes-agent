@@ -615,6 +615,77 @@ def _send_media_via_adapter(
             logger.warning("Job '%s': failed to send media %s: %s", job.get("id", "?"), media_path, e)
 
 
+def _mirror_cron_delivery_to_gateway_session(
+    job: dict,
+    *,
+    platform_name: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    content: str,
+    config,
+) -> None:
+    """Mirror Telegram cron deliveries into the destination gateway session."""
+    if platform_name.lower() != "telegram":
+        return
+    mirror_text = (content or "").strip()
+    if not mirror_text:
+        return
+
+    chat_name = None
+    origin = _resolve_origin(job) or {}
+    if (
+        str(origin.get("platform") or "").lower() == platform_name.lower()
+        and str(origin.get("chat_id") or "") == str(chat_id)
+        and str(origin.get("thread_id") or "") == str(thread_id or "")
+    ):
+        chat_name = origin.get("chat_name") or None
+    if chat_name is None:
+        try:
+            from gateway.config import Platform
+
+            home = config.get_home_channel(Platform(platform_name.lower()))
+            if home and str(home.chat_id) == str(chat_id):
+                chat_name = home.name
+        except Exception:
+            chat_name = None
+
+    try:
+        from gateway.mirror import mirror_to_session
+
+        mirrored = mirror_to_session(
+            platform_name,
+            str(chat_id),
+            mirror_text,
+            source_label="cron",
+            thread_id=str(thread_id) if thread_id else None,
+            create_if_missing=True,
+            chat_name=chat_name,
+            config=config,
+        )
+        if mirrored:
+            logger.info(
+                "Job '%s': mirrored cron delivery into %s:%s session history",
+                job.get("id"),
+                platform_name,
+                chat_id,
+            )
+        else:
+            logger.debug(
+                "Job '%s': cron delivery mirror skipped for %s:%s",
+                job.get("id"),
+                platform_name,
+                chat_id,
+            )
+    except Exception as exc:
+        logger.debug(
+            "Job '%s': cron delivery mirror failed for %s:%s: %s",
+            job.get("id"),
+            platform_name,
+            chat_id,
+            exc,
+        )
+
+
 def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Optional[str]:
     """
     Deliver job output to the configured target(s) (origin chat, specific platform, etc.).
@@ -771,6 +842,14 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 if adapter_ok:
                     logger.info("Job '%s': delivered to %s:%s via live adapter", job["id"], platform_name, chat_id)
                     delivered = True
+                    _mirror_cron_delivery_to_gateway_session(
+                        job,
+                        platform_name=platform_name,
+                        chat_id=str(chat_id),
+                        thread_id=thread_id,
+                        content=cleaned_delivery_content,
+                        config=config,
+                    )
             except Exception as e:
                 logger.warning(
                     "Job '%s': live adapter delivery to %s:%s failed (%s), falling back to standalone",
@@ -804,6 +883,14 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 continue
 
             logger.info("Job '%s': delivered to %s:%s", job["id"], platform_name, chat_id)
+            _mirror_cron_delivery_to_gateway_session(
+                job,
+                platform_name=platform_name,
+                chat_id=str(chat_id),
+                thread_id=thread_id,
+                content=cleaned_delivery_content,
+                config=config,
+            )
 
     if delivery_errors:
         return "; ".join(delivery_errors)

@@ -488,7 +488,7 @@ class TestRoutingIntents:
 
 
 class TestDeliverResultWrapping:
-    """Verify that cron deliveries are wrapped with header/footer and no longer mirrored."""
+    """Verify cron delivery wrapping, media extraction, and session mirroring."""
 
     def _safe_media_path(self, tmp_path, monkeypatch, name, data=b"media"):
         root = tmp_path / "media-cache"
@@ -788,8 +788,8 @@ class TestDeliverResultWrapping:
         assert "MEDIA:" not in text_sent
         assert "Report" in text_sent
 
-    def test_no_mirror_to_session_call(self):
-        """Cron deliveries should NOT mirror into the gateway session."""
+    def test_telegram_delivery_mirrors_to_gateway_session(self):
+        """Cron Telegram deliveries should become assistant context in the target session."""
         from gateway.config import Platform
 
         pconfig = MagicMock()
@@ -798,16 +798,30 @@ class TestDeliverResultWrapping:
         mock_cfg.platforms = {Platform.TELEGRAM: pconfig}
 
         with patch("gateway.config.load_gateway_config", return_value=mock_cfg), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
              patch("tools.send_message_tool._send_to_platform", new=AsyncMock(return_value={"success": True})), \
              patch("gateway.mirror.mirror_to_session") as mirror_mock:
             job = {
                 "id": "test-job",
                 "deliver": "origin",
-                "origin": {"platform": "telegram", "chat_id": "123"},
+                "origin": {
+                    "platform": "telegram",
+                    "chat_id": "123",
+                    "chat_name": "Garden group",
+                },
             }
             _deliver_result(job, "Hello!")
 
-        mirror_mock.assert_not_called()
+        mirror_mock.assert_called_once_with(
+            "telegram",
+            "123",
+            "Hello!",
+            source_label="cron",
+            thread_id=None,
+            create_if_missing=True,
+            chat_name="Garden group",
+            config=mock_cfg,
+        )
 
     def test_origin_delivery_preserves_thread_id(self):
         """Origin delivery should forward thread_id to the send helper."""

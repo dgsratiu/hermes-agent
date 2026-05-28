@@ -1,0 +1,26 @@
+# telegram-context-cron-reminder
+
+- task: Root-cause and fix @concierge missing context for a simple Telegram reply after cron-delivered arXiv reminder.
+- branch: wt/telegram-context-cron-reminder-235614
+- worktree: /usr/local/lib/hermes-agent-wt-telegram-context-cron-reminder-20260527235614
+- base: origin/main
+- evidence:
+  - 2026-05-27 23:47 cron delivered reminder for arXiv 2605.23904 to telegram group.
+  - 2026-05-27 23:54 inbound Telegram from Daniel: "hermes how much of this paper is in the hermes harness contract and where are th..."
+  - Assistant replied: "I don’t have the paper in this wake..." despite cron reminder containing paper id/title/link 7 minutes earlier.
+  - state.db has cron session messages 2495-2500 and telegram assistant 2503, but no telegram user row for the 23:54 inbound around message ids 2501-2503.
+  - sessions.json has shared key agent:main:telegram:group:-5267591862 plus legacy per-user shards.
+- findings:
+  - Root cause 1: `cron.scheduler._deliver_result()` delivered to Telegram through the live adapter or standalone `_send_to_platform()` path, but never called the existing `gateway.mirror.mirror_to_session()` helper. The delivered paper reminder stayed only in the ephemeral cron session, so the next Telegram reply loaded no paper context.
+  - Root cause 2: `gateway.mirror._find_session_id()` treated a same-chat shared group session plus legacy per-user shards as ambiguous when no `user_id` was supplied. That would have made a naive cron mirror miss the current shared group session.
+  - Inbound user persistence: normal gateway success path should persist the current user turn through `AIAgent._flush_messages_to_session_db()` and skip the gateway duplicate write only after that. Added an explicit flush-success flag so gateway fallback writes remain enabled if the agent DB flush did not actually succeed.
+- fix:
+  - Telegram cron deliveries now mirror cleaned delivered text into the destination gateway session as an assistant message, with `create_if_missing=True` so a home/origin channel can receive context before the next inbound.
+  - Mirror lookup now prefers a shared same-chat session over stale per-user shards.
+  - Gateway duplicate-write suppression now keys off the agent's actual DB flush-success flag instead of assuming any configured session DB means the agent persisted the turn.
+- checks:
+  - Added regression tests for Telegram cron delivery mirroring, shared-session preference with legacy shards, create-if-missing Telegram group mirroring, and the agent DB flush-success flag.
+  - Reviewed historical `37a997945` ("stop injecting cron outputs into gateway session history") before finalizing. This fix keeps that broad behavior closed: it mirrors only cleaned text that was actually delivered to Telegram, only into the matching destination gateway session, and only after the send path succeeds.
+  - `git diff --check` passed.
+  - `/usr/local/lib/hermes-agent/venv/bin/python -m pytest tests/cron/test_scheduler.py::TestDeliverResultWrapping tests/gateway/test_mirror.py tests/run_agent/test_860_dedup.py` passed: 35 tests.
+  - No push performed. Runtime reload still required wherever the long-running gateway/cron ticker is already running, because the fix changes imported Python modules.

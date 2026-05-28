@@ -1343,6 +1343,7 @@ class AIAgent:
         written, so repeated calls (from multiple exit paths) only write
         truly new messages — preventing the duplicate-write bug (#860).
         """
+        self._last_session_db_flush_succeeded = False
         if not self._session_db:
             return
         self._apply_persist_user_message_override(messages)
@@ -1392,6 +1393,7 @@ class AIAgent:
                     codex_message_items=msg.get("codex_message_items") if role == "assistant" else None,
                 )
             self._last_flushed_db_idx = len(messages)
+            self._last_session_db_flush_succeeded = True
         except Exception as e:
             logger.warning("Session DB append_message failed: %s", e)
 

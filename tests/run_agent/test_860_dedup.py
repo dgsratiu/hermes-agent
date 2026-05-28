@@ -65,6 +65,7 @@ class TestFlushDeduplication:
 
             rows = db.get_messages(agent.session_id)
             assert len(rows) == 2, f"Expected 2 messages, got {len(rows)}"
+            assert agent._last_session_db_flush_succeeded is True
 
             # Second flush with SAME messages — should write 0 new messages
             agent._flush_messages_to_session_db(messages, conversation_history)
@@ -243,6 +244,7 @@ class TestFlushIdxInit:
                 skip_memory=True,
             )
         assert agent._last_flushed_db_idx == 0
+        assert agent._last_session_db_flush_succeeded is False
 
     def test_no_session_db_noop(self):
         """Without session_db, flush is a no-op and doesn't crash."""
@@ -260,3 +262,4 @@ class TestFlushIdxInit:
         agent._flush_messages_to_session_db(messages, [])
         # Should not crash, idx should remain 0
         assert agent._last_flushed_db_idx == 0
+        assert agent._last_session_db_flush_succeeded is False

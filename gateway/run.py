@@ -9145,7 +9145,11 @@ class GatewayRunner:
                     # _flush_messages_to_session_db(), so skip the DB write here
                     # to prevent the duplicate-write bug (#860).  We still write
                     # to JSONL for backward compatibility and as a backup.
-                    agent_persisted = self._session_db is not None
+                    agent_persisted = (
+                        bool(agent_result.get("agent_persisted"))
+                        if "agent_persisted" in agent_result
+                        else self._session_db is not None
+                    )
                     # Attach the inbound platform message_id to the first user
                     # entry written this turn so platform-level quote-resolution
                     # (e.g. Yuanbao QuoteContextMiddleware's transcript fallback)
@@ -17318,6 +17322,7 @@ class GatewayRunner:
                     "output_tokens": _output_toks,
                     "model": _resolved_model,
                     "context_length": _context_length,
+                    "agent_persisted": bool(getattr(_agent, "_last_session_db_flush_succeeded", False)),
                 }
             
             # Scan tool results for MEDIA:<path> tags that need to be delivered
@@ -17479,6 +17484,7 @@ class GatewayRunner:
                 "model": _resolved_model,
                 "context_length": _context_length,
                 "session_id": effective_session_id,
+                "agent_persisted": bool(getattr(agent, "_last_session_db_flush_succeeded", False)),
                 "response_previewed": result.get("response_previewed", False),
                 "response_transformed": result.get("response_transformed", False),
             }

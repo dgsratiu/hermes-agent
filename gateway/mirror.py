@@ -12,7 +12,7 @@ the full SessionStore machinery.
 import json
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from hermes_cli.config import get_hermes_home
 
@@ -29,12 +29,19 @@ def mirror_to_session(
     source_label: str = "cli",
     thread_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    *,
+    create_if_missing: bool = False,
+    chat_type: Optional[str] = None,
+    chat_name: Optional[str] = None,
+    config: Optional[Any] = None,
 ) -> bool:
     """
     Append a delivery-mirror message to the target session's transcript.
 
     Finds the gateway session that matches the given platform + chat_id,
-    then writes a mirror entry to both the JSONL transcript and SQLite DB.
+    then writes a mirror entry to SQLite.  When ``create_if_missing`` is True,
+    a target gateway session is created first so a later reply in that chat can
+    load the delivered message as prior assistant context.
 
     Returns True if mirrored successfully, False if no matching session or error.
     All errors are caught -- this is never fatal.
@@ -46,6 +53,17 @@ def mirror_to_session(
             thread_id=thread_id,
             user_id=user_id,
         )
+        if not session_id:
+            if create_if_missing:
+                session_id = _create_session_id(
+                    platform,
+                    str(chat_id),
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    chat_type=chat_type,
+                    chat_name=chat_name,
+                    config=config,
+                )
         if not session_id:
             logger.debug(
                 "Mirror: no session found for %s:%s:%s:%s",
@@ -137,16 +155,85 @@ def _find_session_id(
         elif len(candidates) > 1:
             return None
     elif len(candidates) > 1:
-        distinct_user_ids = {
-            str((entry.get("origin") or {}).get("user_id") or "").strip()
-            for entry in candidates
-            if str((entry.get("origin") or {}).get("user_id") or "").strip()
-        }
-        if len(distinct_user_ids) > 1:
-            return None
+        # Prefer the shared group/thread session when it exists alongside
+        # legacy per-user shards for the same chat.  This is the shape produced
+        # when a deployment changes from per-user group sessions to shared group
+        # sessions; treating it as ambiguous drops delivery context on the floor.
+        shared_candidates = [
+            entry for entry in candidates
+            if not str((entry.get("origin") or {}).get("user_id") or "").strip()
+        ]
+        if shared_candidates:
+            candidates = shared_candidates
+        else:
+            distinct_user_ids = {
+                str((entry.get("origin") or {}).get("user_id") or "").strip()
+                for entry in candidates
+                if str((entry.get("origin") or {}).get("user_id") or "").strip()
+            }
+            if len(distinct_user_ids) > 1:
+                return None
 
     best_entry = max(candidates, key=lambda entry: entry.get("updated_at", ""))
     return best_entry.get("session_id")
+
+
+def _infer_chat_type(platform: str, chat_id: str, thread_id: Optional[str], chat_type: Optional[str]) -> str:
+    if chat_type:
+        return chat_type
+    if platform.lower() == "telegram":
+        return "group" if str(chat_id).startswith("-") else "dm"
+    if thread_id:
+        return "thread"
+    return "dm"
+
+
+def _create_session_id(
+    platform: str,
+    chat_id: str,
+    *,
+    thread_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    chat_type: Optional[str] = None,
+    chat_name: Optional[str] = None,
+    config: Optional[Any] = None,
+) -> Optional[str]:
+    """Create a gateway session entry for an outbound delivery target."""
+    store = None
+    try:
+        from gateway.config import Platform, load_gateway_config
+        from gateway.session import SessionSource, SessionStore
+
+        platform_enum = Platform(platform.lower())
+        config = config or load_gateway_config()
+        source = SessionSource(
+            platform=platform_enum,
+            chat_id=str(chat_id),
+            chat_name=chat_name,
+            chat_type=_infer_chat_type(platform, chat_id, thread_id, chat_type),
+            user_id=str(user_id) if user_id else None,
+            thread_id=str(thread_id) if thread_id else None,
+        )
+        store = SessionStore(sessions_dir=config.sessions_dir, config=config)
+        entry = store.get_or_create_session(source)
+        return entry.session_id
+    except Exception as exc:
+        logger.debug(
+            "Mirror: failed to create session for %s:%s:%s:%s: %s",
+            platform,
+            chat_id,
+            thread_id,
+            user_id,
+            exc,
+        )
+        return None
+    finally:
+        db = getattr(store, "_db", None) if store is not None else None
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import gateway.mirror as mirror_mod
+from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.mirror import (
     mirror_to_session,
     _find_session_id,
@@ -115,6 +116,31 @@ class TestFindSessionId:
             result = _find_session_id("telegram", "-1001")
 
         assert result is None
+
+    def test_prefers_shared_group_session_over_legacy_user_shards(self, tmp_path):
+        sessions_dir, index_file = _setup_sessions(tmp_path, {
+            "shared": {
+                "session_id": "sess_shared",
+                "origin": {"platform": "telegram", "chat_id": "-1001"},
+                "updated_at": "2026-01-01T00:00:00",
+            },
+            "alice": {
+                "session_id": "sess_alice",
+                "origin": {"platform": "telegram", "chat_id": "-1001", "user_id": "alice"},
+                "updated_at": "2026-02-01T00:00:00",
+            },
+            "bob": {
+                "session_id": "sess_bob",
+                "origin": {"platform": "telegram", "chat_id": "-1001", "user_id": "bob"},
+                "updated_at": "2026-03-01T00:00:00",
+            },
+        })
+
+        with patch.object(mirror_mod, "_SESSIONS_DIR", sessions_dir), \
+             patch.object(mirror_mod, "_SESSIONS_INDEX", index_file):
+            result = _find_session_id("telegram", "-1001")
+
+        assert result == "sess_shared"
 
     def test_no_match_returns_none(self, tmp_path):
         sessions_dir, index_file = _setup_sessions(tmp_path, {
@@ -245,6 +271,46 @@ class TestMirrorToSession:
             result = mirror_to_session("telegram", "123", "msg")
 
         assert result is False
+
+    def test_create_if_missing_creates_telegram_group_session(self, tmp_path, monkeypatch):
+        import hermes_state
+
+        db_path = tmp_path / "state.db"
+        monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", db_path)
+        sessions_dir = tmp_path / "sessions"
+        index_file = sessions_dir / "sessions.json"
+        config = GatewayConfig(
+            platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="fake")},
+            sessions_dir=sessions_dir,
+            group_sessions_per_user=False,
+        )
+
+        with patch.object(mirror_mod, "_SESSIONS_DIR", sessions_dir), \
+             patch.object(mirror_mod, "_SESSIONS_INDEX", index_file):
+            result = mirror_to_session(
+                "telegram",
+                "-1001",
+                "Paper 2605.23904 summary",
+                source_label="cron",
+                create_if_missing=True,
+                chat_name="Garden group",
+                config=config,
+            )
+
+        assert result is True
+        data = json.loads(index_file.read_text())
+        entry = data["agent:main:telegram:group:-1001"]
+        assert entry["origin"]["chat_type"] == "group"
+        assert entry["origin"]["chat_name"] == "Garden group"
+
+        db = hermes_state.SessionDB(db_path)
+        try:
+            messages = db.get_messages_as_conversation(entry["session_id"])
+        finally:
+            db.close()
+        assert messages == [
+            {"role": "assistant", "content": "Paper 2605.23904 summary"}
+        ]
 
 
 class TestAppendToSqlite:
