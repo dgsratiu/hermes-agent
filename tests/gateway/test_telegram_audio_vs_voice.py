@@ -98,6 +98,105 @@ async def test_voice_message_still_transcribed():
     assert "voice message" in result.lower()
 
 
+@pytest.mark.asyncio
+async def test_voice_message_echoes_transcript_to_chat():
+    """Successful Telegram voice STT should remain visible as its own bubble."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = _voice_event("/tmp/voice.ogg")
+    adapter = MagicMock()
+    adapter.send = AsyncMock(return_value=True)
+    adapter.send_or_update_status = AsyncMock(return_value=True)
+    adapter.edit_message = AsyncMock(return_value=True)
+    runner.adapters = {Platform.TELEGRAM: adapter}
+
+    with patch(
+        "tools.transcription_tools.transcribe_audio",
+        return_value={"success": True, "transcript": "hello world", "provider": "whisper"},
+    ):
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+        )
+
+    adapter.send.assert_awaited_once_with(
+        "1",
+        "🎤 Voice transcript:\nhello world",
+        reply_to=None,
+        metadata=None,
+    )
+    adapter.send_or_update_status.assert_not_awaited()
+    adapter.edit_message.assert_not_awaited()
+    assert "hello world" in result
+
+
+@pytest.mark.asyncio
+async def test_voice_message_echoes_multiple_transcripts_in_one_message():
+    """Multiple Telegram voice clips should produce one durable transcript echo."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = MessageEvent(
+        text="",
+        message_type=MessageType.VOICE,
+        source=source,
+        media_urls=["/tmp/one.ogg", "/tmp/two.ogg"],
+        media_types=["audio/ogg", "audio/ogg"],
+    )
+    adapter = MagicMock()
+    adapter.send = AsyncMock(return_value=True)
+    runner.adapters = {Platform.TELEGRAM: adapter}
+
+    transcripts = iter(["first clip", "second clip"])
+
+    def fake_transcribe(_path: str) -> dict[str, str | bool]:
+        return {
+            "success": True,
+            "transcript": next(transcripts),
+            "provider": "whisper",
+        }
+
+    with patch("tools.transcription_tools.transcribe_audio", side_effect=fake_transcribe):
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+        )
+
+    adapter.send.assert_awaited_once_with(
+        "1",
+        "🎤 Voice transcript 1:\nfirst clip\n\n🎤 Voice transcript 2:\nsecond clip",
+        reply_to=None,
+        metadata=None,
+    )
+    assert "first clip" in result
+    assert "second clip" in result
+
+
+@pytest.mark.asyncio
+async def test_voice_message_does_not_echo_failed_transcription():
+    """Failed STT gets the existing setup/error path, not a transcript echo."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = _voice_event("/tmp/voice.ogg")
+    adapter = MagicMock()
+    adapter.send = AsyncMock(return_value=True)
+    runner.adapters = {Platform.TELEGRAM: adapter}
+
+    with patch(
+        "tools.transcription_tools.transcribe_audio",
+        return_value={"success": False, "transcript": "", "error": "backend unavailable"},
+    ):
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+        )
+
+    adapter.send.assert_not_awaited()
+    assert "trouble transcribing" in result
+
+
 # ---------------------------------------------------------------------------
 # 2. AUDIO file attachment bypasses STT
 # ---------------------------------------------------------------------------

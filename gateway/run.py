@@ -8033,10 +8033,18 @@ class GatewayRunner:
                     )
 
             if audio_paths:
+                voice_transcripts: List[str] = []
                 message_text = await self._enrich_message_with_transcription(
                     message_text,
                     audio_paths,
+                    transcribed_texts=voice_transcripts,
                 )
+                if voice_transcripts:
+                    await self._echo_voice_transcripts_to_chat(
+                        source,
+                        event,
+                        voice_transcripts,
+                    )
                 _stt_fail_markers = (
                     "No STT provider",
                     "STT is disabled",
@@ -14761,6 +14769,7 @@ class GatewayRunner:
         self,
         user_text: str,
         audio_paths: List[str],
+        transcribed_texts: Optional[List[str]] = None,
     ) -> str:
         """
         Auto-transcribe user voice/audio messages using the configured STT provider
@@ -14803,6 +14812,8 @@ class GatewayRunner:
                 result = await asyncio.to_thread(transcribe_audio, path)
                 if result["success"]:
                     transcript = result["transcript"]
+                    if transcribed_texts is not None:
+                        transcribed_texts.append(str(transcript))
                     enriched_parts.append(
                         f'[The user sent a voice message~ '
                         f'Here\'s what they said: "{transcript}"]'
@@ -14850,6 +14861,42 @@ class GatewayRunner:
                 return f"{prefix}\n\n{user_text}"
             return prefix
         return user_text
+
+    async def _echo_voice_transcripts_to_chat(
+        self,
+        source: SessionSource,
+        event: MessageEvent,
+        transcripts: List[str],
+    ) -> None:
+        """Send successful Telegram STT output as a permanent chat message."""
+        if getattr(source, "platform", None) != Platform.TELEGRAM:
+            return
+        adapter = self.adapters.get(source.platform)
+        if not adapter:
+            return
+
+        cleaned = [str(text).strip() for text in transcripts if str(text).strip()]
+        if not cleaned:
+            return
+        if len(cleaned) == 1:
+            echo_text = f"🎤 Voice transcript:\n{cleaned[0]}"
+        else:
+            echo_text = "\n\n".join(
+                f"🎤 Voice transcript {idx}:\n{text}"
+                for idx, text in enumerate(cleaned, start=1)
+            )
+
+        try:
+            reply_to = self._reply_anchor_for_event(event)
+            metadata = self._thread_metadata_for_source(source, reply_to)
+            await adapter.send(
+                source.chat_id,
+                echo_text,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.debug("Failed to echo Telegram voice transcript", exc_info=True)
 
     def _build_process_event_source(self, evt: dict):
         """Resolve the canonical source for a synthetic background-process event.
