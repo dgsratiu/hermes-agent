@@ -3584,6 +3584,7 @@ class BasePlatformAdapter(ABC):
                 # by skills that produce large/lossless images (e.g. info-graph)
                 # where Telegram's sendPhoto recompression destroys legibility.
                 force_document_attachments = "[[as_document]]" in response
+                telegram_media_as_documents = _platform_name(self.platform) == "telegram"
 
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)
@@ -3716,11 +3717,10 @@ class BasePlatformAdapter(ABC):
                 _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
 
                 # Partition images out of media_files + local_files so they
-                # can be sent as a single batch (Signal RPC). When
-                # ``[[as_document]]`` was set on the original response, image
-                # files skip the photo path and route to send_document below
-                # so they're delivered with original bytes (no Telegram
-                # sendPhoto recompression).
+                # can be sent as a single batch (Signal RPC). For Telegram,
+                # every explicit MEDIA artifact is treated as a document so
+                # original bytes and filenames survive instead of becoming
+                # photo/audio/video bubbles.
                 from urllib.parse import quote as _quote
                 _image_paths: list = []
                 _non_image_media: list = []
@@ -3728,7 +3728,8 @@ class BasePlatformAdapter(ABC):
                     _ext = Path(media_path).suffix.lower()
                     if (_ext in _IMAGE_EXTS
                             and not is_voice
-                            and not force_document_attachments):
+                            and not force_document_attachments
+                            and not telegram_media_as_documents):
                         _image_paths.append(media_path)
                     else:
                         _non_image_media.append((media_path, is_voice))
@@ -3757,7 +3758,13 @@ class BasePlatformAdapter(ABC):
                         await asyncio.sleep(human_delay)
                     try:
                         ext = Path(media_path).suffix.lower()
-                        if should_send_media_as_audio(self.platform, ext, is_voice=is_voice):
+                        if telegram_media_as_documents:
+                            media_result = await self.send_document(
+                                chat_id=event.source.chat_id,
+                                file_path=media_path,
+                                metadata=_thread_metadata,
+                            )
+                        elif should_send_media_as_audio(self.platform, ext, is_voice=is_voice):
                             media_result = await self.send_voice(
                                 chat_id=event.source.chat_id,
                                 audio_path=media_path,

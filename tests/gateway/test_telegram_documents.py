@@ -712,6 +712,43 @@ class TestSendDocument:
         assert call_kwargs["caption"] == "Here's the report"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "filename,payload",
+        [
+            ("artifact.png", b"\x89PNG\r\n\x1a\nbytes"),
+            ("speech.mp3", b"ID3 audio"),
+            ("clip.mp4", b"\x00\x00\x00\x18ftypmp42"),
+            ("notes.txt", b"plain text"),
+        ],
+    )
+    async def test_send_document_uses_senddocument_for_artifact_extensions(
+        self, connected_adapter, tmp_path, filename, payload
+    ):
+        """Artifact uploads must use Telegram sendDocument regardless of media extension."""
+        test_file = tmp_path / filename
+        test_file.write_bytes(payload)
+
+        mock_msg = MagicMock()
+        mock_msg.message_id = 104
+        connected_adapter._bot.send_document = AsyncMock(return_value=mock_msg)
+        connected_adapter._bot.send_photo = AsyncMock()
+        connected_adapter._bot.send_audio = AsyncMock()
+        connected_adapter._bot.send_video = AsyncMock()
+
+        result = await connected_adapter.send_document(
+            chat_id="12345",
+            file_path=str(test_file),
+        )
+
+        assert result.success is True
+        connected_adapter._bot.send_document.assert_awaited_once()
+        call_kwargs = connected_adapter._bot.send_document.call_args[1]
+        assert call_kwargs["filename"] == filename
+        connected_adapter._bot.send_photo.assert_not_awaited()
+        connected_adapter._bot.send_audio.assert_not_awaited()
+        connected_adapter._bot.send_video.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_send_document_custom_filename(self, connected_adapter, tmp_path):
         """The file_name parameter overrides the basename for display."""
         test_file = tmp_path / "doc_abc123_ugly.csv"

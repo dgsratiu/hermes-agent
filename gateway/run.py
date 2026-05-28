@@ -11604,6 +11604,7 @@ class GatewayRunner:
             # through send_document (preserving bytes) instead of
             # send_multiple_images (Telegram sendPhoto recompresses to ~1280px).
             force_document_attachments = "[[as_document]]" in response
+            telegram_media_as_documents = _gateway_platform_value(event.source.platform) == "telegram"
 
             from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
 
@@ -11619,16 +11620,17 @@ class GatewayRunner:
             _IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
 
             # Partition out images so they can be sent as a single batch
-            # (e.g. Signal's multi-attachment RPC). When [[as_document]] was
-            # set, image-extension files skip the photo path and route to
-            # send_document below — preserving original bytes.
+            # (e.g. Signal's multi-attachment RPC). Telegram explicit MEDIA
+            # artifacts always route to send_document so original bytes and
+            # filenames survive instead of photo/audio/video transforms.
             image_paths: list = []
             non_image_media: list = []
             for media_path, is_voice in media_files:
                 ext = Path(media_path).suffix.lower()
                 if (ext in _IMAGE_EXTS
                         and not is_voice
-                        and not force_document_attachments):
+                        and not force_document_attachments
+                        and not telegram_media_as_documents):
                     image_paths.append(media_path)
                 else:
                     non_image_media.append((media_path, is_voice))
@@ -11655,7 +11657,13 @@ class GatewayRunner:
             for media_path, is_voice in non_image_media:
                 try:
                     ext = Path(media_path).suffix.lower()
-                    if should_send_media_as_audio(event.source.platform, ext, is_voice=is_voice):
+                    if telegram_media_as_documents:
+                        await adapter.send_document(
+                            chat_id=event.source.chat_id,
+                            file_path=media_path,
+                            metadata=_thread_meta,
+                        )
+                    elif should_send_media_as_audio(event.source.platform, ext, is_voice=is_voice):
                         await adapter.send_voice(
                             chat_id=event.source.chat_id,
                             audio_path=media_path,
