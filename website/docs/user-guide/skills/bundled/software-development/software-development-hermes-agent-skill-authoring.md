@@ -21,7 +21,7 @@ Author in-repo SKILL.md: frontmatter, validator, structure.
 | License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `skills`, `authoring`, `hermes-agent`, `conventions`, `skill-md` |
-| Related skills | [`writing-plans`](/user-guide/skills/bundled/software-development/software-development-writing-plans), [`requesting-code-review`](/user-guide/skills/bundled/software-development/software-development-requesting-code-review) |
+| Related skills | [`writing-plans`](/docs/user-guide/skills/bundled/software-development/software-development-writing-plans), [`requesting-code-review`](/docs/user-guide/skills/bundled/software-development/software-development-requesting-code-review) |
 
 ## Reference: full SKILL.md
 
@@ -143,6 +143,16 @@ Pick the closest existing category. Don't invent new top-level categories casual
 5. **Git add + commit** on the active branch.
 6. **Note:** the CURRENT session's skill loader is cached — `skill_view` / `skills_list` will not see the new skill until a new session. This is expected, not a bug.
 
+## Session-Save Skill Parity
+
+When save-time, release, or pre-commit work updates durable repo context, treat repo skills as durable repo surfaces, just like docs. A session that changed reusable skill behavior is incomplete until the in-repo source skill, generated skill docs, and validation trail all agree.
+
+Audit `skills/`, `optional-skills/`, and plugin `SKILL.md` files when a lesson changes agent workflow, tool usage, setup, verification, or common pitfalls. Put the durable instruction in the narrowest matching `SKILL.md`; keep one-off task notes in `docs/context/` instead.
+
+After any in-repo `SKILL.md` change, run `website/scripts/generate-skill-docs.py` so `website/docs/user-guide/skills/`, `website/docs/reference/skills-catalog.md`, `website/docs/reference/optional-skills-catalog.md`, and `website/sidebars.ts` stay in sync with source. Do not hand-edit generated skill docs unless you are changing the generator itself.
+
+Do not edit `~/.hermes/skills/` to satisfy an in-repo skill change. User-local skills are runtime/profile state; repo skills are committed source under `skills/`, `optional-skills/`, or a plugin directory.
+
 ## Cross-Referencing Other Skills
 
 `metadata.hermes.related_skills` unions both trees (`skills/` in-repo and `~/.hermes/skills/`) at load time. You CAN reference a user-local skill from an in-repo skill, but it won't resolve for other users who clone the repo fresh. Prefer referencing only in-repo skills from in-repo skills. If a frequently-referenced skill lives only in `~/.hermes/skills/`, consider promoting it to the repo.
@@ -180,4 +190,5 @@ Pick the closest existing category. Don't invent new top-level categories casual
 - [ ] Total file ≤ 100,000 chars (aim for 8-15k)
 - [ ] Structure: `# Title` → `## Overview` → `## When to Use` → body → `## Common Pitfalls` → `## Verification Checklist`
 - [ ] `related_skills` references resolve in-repo (or are explicitly OK to be user-local)
+- [ ] Generated skill docs and catalogs were regenerated after any in-repo `SKILL.md` change
 - [ ] `git add skills/<category>/<name>/ && git commit` completed on the intended branch

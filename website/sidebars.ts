@@ -151,6 +151,7 @@ const sidebars: SidebarsConfig = {
                     'user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code',
                     'user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-codex',
                     'user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent',
+                    'user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-kanban-codex-lane',
                     'user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode',
                   ],
                 },
@@ -357,6 +358,7 @@ const sidebars: SidebarsConfig = {
                   items: [
                     'user-guide/skills/bundled/software-development/software-development-debugging-hermes-tui-commands',
                     'user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring',
+                    'user-guide/skills/bundled/software-development/software-development-hermes-s6-container-supervision',
                     'user-guide/skills/bundled/software-development/software-development-node-inspect-debugger',
                     'user-guide/skills/bundled/software-development/software-development-plan',
                     'user-guide/skills/bundled/software-development/software-development-python-debugpy',
@@ -582,6 +584,7 @@ const sidebars: SidebarsConfig = {
                     'user-guide/skills/optional/security/security-1password',
                     'user-guide/skills/optional/security/security-oss-forensics',
                     'user-guide/skills/optional/security/security-sherlock',
+                    'user-guide/skills/optional/security/security-web-pentest',
                   ],
                 },
                 {
