@@ -1563,6 +1563,251 @@ def _format_gateway_process_notification(evt: dict) -> "str | None":
     return None
 
 
+_BG_COMMAND_LIMIT = 220
+_BG_INLINE_OUTPUT_LIMIT = 900
+_BG_INLINE_LINE_LIMIT = 24
+_BG_EXCERPT_LIMIT = 600
+_BG_EXCERPT_LINE_LIMIT = 12
+
+
+def _clip_single_line(value: object, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _format_elapsed_short(seconds: float | int | None) -> str:
+    if seconds is None:
+        return ""
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _looks_like_diff_output(output: str) -> bool:
+    if "diff --git " in output:
+        return True
+    lines = output.splitlines()
+    diff_markers = sum(
+        1
+        for line in lines[:300]
+        if line.startswith(("@@", "+++ ", "--- ", "index "))
+    )
+    patch_lines = sum(
+        1
+        for line in lines[:500]
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+    return diff_markers >= 3 and patch_lines >= 10
+
+
+def _looks_like_test_spam(output: str) -> bool:
+    if not output:
+        return False
+    lower = output.lower()
+    spam_markers = (
+        "tokens used",
+        "short test summary info",
+        "=== failures ===",
+        "=== errors ===",
+        "collected ",
+        "pytest",
+        " passed in ",
+        " failed in ",
+        " warnings in ",
+    )
+    return any(marker in lower for marker in spam_markers)
+
+
+def _needs_completion_log(output: str) -> bool:
+    if not output:
+        return False
+    return (
+        len(output) > _BG_INLINE_OUTPUT_LIMIT
+        or len(output.splitlines()) > _BG_INLINE_LINE_LIMIT
+        or _looks_like_diff_output(output)
+        or _looks_like_test_spam(output)
+    )
+
+
+def _bounded_multiline(value: str, *, chars: int, lines: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    selected = text.splitlines()[-lines:]
+    clipped = "\n".join(selected).strip()
+    if len(clipped) > chars:
+        clipped = clipped[-chars:].lstrip()
+        nl = clipped.find("\n")
+        if nl != -1:
+            clipped = clipped[nl + 1 :].lstrip()
+    return clipped.strip()
+
+
+def _error_excerpt(output: str) -> str:
+    lines = output.splitlines()
+    if not lines:
+        return ""
+    markers = re.compile(
+        r"(error|failed|failure|traceback|exception|assertionerror|fatal|panic)",
+        re.IGNORECASE,
+    )
+    matches = [line for line in lines if markers.search(line)]
+    if matches:
+        return _bounded_multiline(
+            "\n".join(matches),
+            chars=_BG_EXCERPT_LIMIT,
+            lines=_BG_EXCERPT_LINE_LIMIT,
+        )
+    return ""
+
+
+def _completion_output_excerpt(output: str, *, exit_code: object) -> str:
+    if not output:
+        return ""
+    err = _error_excerpt(output)
+    if err:
+        return err
+    if _looks_like_diff_output(output):
+        return ""
+    if exit_code not in {0, "0", None}:
+        return _bounded_multiline(
+            output,
+            chars=_BG_EXCERPT_LIMIT,
+            lines=_BG_EXCERPT_LINE_LIMIT,
+        )
+    return _bounded_multiline(
+        output,
+        chars=_BG_EXCERPT_LIMIT,
+        lines=min(6, _BG_EXCERPT_LINE_LIMIT),
+    )
+
+
+def _completion_log_path(session_id: str) -> Path:
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session_id or "unknown")).strip("._")
+    safe_id = (safe_id or "unknown")[:96]
+    return _hermes_home / "logs" / "background_processes" / f"{safe_id}.log"
+
+
+def _save_completion_log(
+    *,
+    session_id: str,
+    command: str,
+    output: str,
+    exit_code: object,
+    elapsed: str,
+    pid: object,
+) -> "str | None":
+    try:
+        path = _completion_log_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        header = [
+            "Hermes background process completion log",
+            f"process_id: {session_id}",
+        ]
+        if pid not in {None, ""}:
+            header.append(f"pid: {pid}")
+        header.extend(
+            [
+                f"exit_code: {exit_code}",
+                f"elapsed: {elapsed or 'unknown'}",
+                f"command: {command}",
+                "",
+                "--- output ---",
+            ]
+        )
+        path.write_text("\n".join(header) + "\n" + (output or ""), encoding="utf-8")
+        return str(path)
+    except Exception as exc:
+        logger.warning("Failed to write background process completion log: %s", exc)
+        return None
+
+
+def _format_background_completion_card(
+    session_id: str,
+    session: object,
+    *,
+    important: bool = False,
+) -> str:
+    """Build a bounded gateway card for background-process completion."""
+    from tools.ansi_strip import strip_ansi
+
+    command = str(getattr(session, "command", "") or "unknown")
+    output = strip_ansi(str(getattr(session, "output_buffer", "") or ""))
+    exit_code = getattr(session, "exit_code", None)
+    pid = getattr(session, "pid", None)
+    started_at = getattr(session, "started_at", None)
+    elapsed = ""
+    if started_at:
+        try:
+            elapsed = _format_elapsed_short(time.time() - float(started_at))
+        except Exception:
+            elapsed = ""
+
+    process_label = str(session_id or getattr(session, "id", "") or "unknown")
+    if pid not in {None, ""}:
+        process_label = f"{process_label} (pid {pid})"
+
+    status = "unknown"
+    if exit_code == 0:
+        status = "success"
+    elif exit_code is not None:
+        status = "failed"
+
+    lines = [
+        "Background process completed",
+        f"Process: {process_label}",
+        f"Status: {status} (finished with exit code {exit_code})",
+    ]
+    if elapsed:
+        lines.append(f"Elapsed: {elapsed}")
+    lines.append(f"Command: {_clip_single_line(command, _BG_COMMAND_LIMIT)}")
+
+    if _needs_completion_log(output):
+        log_path = _save_completion_log(
+            session_id=str(session_id or "unknown"),
+            command=command,
+            output=output,
+            exit_code=exit_code,
+            elapsed=elapsed,
+            pid=pid,
+        )
+        if log_path:
+            lines.append(f"Log: {log_path}")
+        else:
+            lines.append(f"Log: process(action=\"log\", session_id=\"{session_id}\")")
+        excerpt = _completion_output_excerpt(output, exit_code=exit_code)
+        if excerpt:
+            lines.extend(["Excerpt:", excerpt])
+        elif _looks_like_diff_output(output):
+            lines.append("Excerpt: omitted because output looks like a diff.")
+    elif output.strip():
+        lines.extend(
+            [
+                "Output:",
+                _bounded_multiline(
+                    output,
+                    chars=_BG_INLINE_OUTPUT_LIMIT,
+                    lines=_BG_INLINE_LINE_LIMIT,
+                ),
+            ]
+        )
+
+    body = "\n".join(lines).strip()
+    if important:
+        return f"[IMPORTANT: {body}]"
+    return f"[{body}]"
+
+
 # Module-level weak reference to the active GatewayRunner instance.
 # Used by tools (e.g. send_message) that need to route through a live
 # adapter for plugin platforms.  Set in GatewayRunner.__init__().
@@ -15074,25 +15319,10 @@ class GatewayRunner:
                 # Skip if the agent already consumed the result via wait/poll/log
                 from tools.process_registry import process_registry as _pr_check
                 if agent_notify and not _pr_check.is_completion_consumed(session_id):
-                    from tools.ansi_strip import strip_ansi
-                    _raw = strip_ansi(session.output_buffer) if session.output_buffer else ""
-                    # Truncate at line boundaries so notifications never start
-                    # mid-line (fixes #23284). Keep the last ~2000 chars but
-                    # snap to the nearest preceding newline, then prepend a
-                    # truncation marker when output was cut.
-                    _LIMIT = 2000
-                    if len(_raw) > _LIMIT:
-                        _tail = _raw[-_LIMIT:]
-                        _nl = _tail.find("\n")
-                        _tail = _tail[_nl + 1:] if _nl != -1 else _tail
-                        _out = f"[… output truncated — showing last {len(_tail)} chars]\n{_tail}"
-                    else:
-                        _out = _raw
-                    synth_text = (
-                        f"[IMPORTANT: Background process {session_id} completed "
-                        f"(exit code {session.exit_code}).\n"
-                        f"Command: {session.command}\n"
-                        f"Output:\n{_out}]"
+                    synth_text = _format_background_completion_card(
+                        session_id,
+                        session,
+                        important=True,
                     )
                     source = self._build_process_event_source({
                         "session_id": session_id,
@@ -15143,11 +15373,7 @@ class GatewayRunner:
                     or (notify_mode == "error" and session.exit_code not in {0, None})
                 )
                 if should_notify:
-                    new_output = session.output_buffer[-1000:] if session.output_buffer else ""
-                    message_text = (
-                        f"[Background process {session_id} finished with exit code {session.exit_code}~ "
-                        f"Here's the final output:\n{new_output}]"
-                    )
+                    message_text = _format_background_completion_card(session_id, session)
                     adapter = None
                     for p, a in self.adapters.items():
                         if p.value == platform_name:

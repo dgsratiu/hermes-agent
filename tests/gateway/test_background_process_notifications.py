@@ -8,6 +8,7 @@ Contributed by @PeterFile (PR #593), reimplemented on current main.
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -63,6 +64,10 @@ def _watcher_dict(session_id="proc_test", thread_id=""):
     if thread_id:
         d["thread_id"] = thread_id
     return d
+
+
+async def _instant_sleep(*_a, **_kw):
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +251,157 @@ async def test_no_thread_id_sends_no_metadata(monkeypatch, tmp_path):
     assert adapter.send.await_count == 1
     _, kwargs = adapter.send.call_args
     assert kwargs["metadata"] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_on_complete_long_success_is_summary_card(monkeypatch, tmp_path):
+    """Agent-triggered completion events do not inject raw long stdout."""
+    import tools.process_registry as pr_module
+
+    output = "BEGIN_RAW_DIFF_OR_TOKEN_SPAM\n" + "\n".join(
+        f"tokens used: {idx}" for idx in range(120)
+    ) + "\nTAIL_OK"
+    sessions = [
+        SimpleNamespace(
+            output_buffer=output,
+            exited=True,
+            exit_code=0,
+            command="codex exec --json 'large task'",
+            started_at=time.time() - 91,
+            pid=4321,
+        )
+    ]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+    watcher = {
+        "session_id": "proc_long_success",
+        "check_interval": 0,
+        "session_key": "agent:main:telegram:dm:123:24296",
+        "platform": "telegram",
+        "chat_id": "123",
+        "thread_id": "24296",
+        "notify_on_complete": True,
+    }
+
+    await runner._run_process_watcher(watcher)
+
+    adapter.handle_message.assert_awaited_once()
+    synth_event = adapter.handle_message.await_args.args[0]
+    text = synth_event.text
+    assert "Process: proc_long_success (pid 4321)" in text
+    assert "Status: success (finished with exit code 0)" in text
+    assert "Elapsed:" in text
+    assert "Command: codex exec --json 'large task'" in text
+    assert "Log:" in text
+    assert "BEGIN_RAW_DIFF_OR_TOKEN_SPAM" not in text
+    assert text.count("tokens used") <= 6
+    assert len(text) < 1400
+    log_path = tmp_path / "logs" / "background_processes" / "proc_long_success.log"
+    assert "BEGIN_RAW_DIFF_OR_TOKEN_SPAM" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_failed_long_completion_uses_small_error_tail(monkeypatch, tmp_path):
+    import tools.process_registry as pr_module
+
+    output = "\n".join(f"setup noise {idx}" for idx in range(150))
+    output += "\nTraceback (most recent call last):\nERROR: database migrated backwards\n"
+    sessions = [
+        SimpleNamespace(
+            output_buffer=output,
+            exited=True,
+            exit_code=1,
+            command="pytest tests/test_big.py -q",
+            started_at=time.time() - 7,
+        )
+    ]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    await runner._run_process_watcher(_watcher_dict(session_id="proc_failed_long"))
+
+    sent_message = adapter.send.await_args.args[1]
+    assert "Status: failed (finished with exit code 1)" in sent_message
+    assert "Log:" in sent_message
+    assert "Traceback (most recent call last):" in sent_message
+    assert "ERROR: database migrated backwards" in sent_message
+    assert "setup noise 0" not in sent_message
+    assert len(sent_message) < 1400
+    log_path = tmp_path / "logs" / "background_processes" / "proc_failed_long.log"
+    assert "setup noise 0" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_diff_completion_is_not_pasted_inline(monkeypatch, tmp_path):
+    import tools.process_registry as pr_module
+
+    diff_output = (
+        "diff --git a/app.py b/app.py\n"
+        "index 1111111..2222222 100644\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        + "\n".join(f"+added secret diff line {idx}" for idx in range(80))
+    )
+    sessions = [
+        SimpleNamespace(
+            output_buffer=diff_output,
+            exited=True,
+            exit_code=0,
+            command="git diff",
+            started_at=time.time() - 3,
+        )
+    ]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    await runner._run_process_watcher(_watcher_dict(session_id="proc_diff"))
+
+    sent_message = adapter.send.await_args.args[1]
+    assert "Log:" in sent_message
+    assert "output looks like a diff" in sent_message
+    assert "diff --git" not in sent_message
+    assert "added secret diff line" not in sent_message
+    log_path = tmp_path / "logs" / "background_processes" / "proc_diff.log"
+    assert "diff --git a/app.py b/app.py" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_short_completion_output_remains_readable(monkeypatch, tmp_path):
+    import tools.process_registry as pr_module
+
+    sessions = [
+        SimpleNamespace(
+            output_buffer="ok\n3 passed\n",
+            exited=True,
+            exit_code=0,
+            command="pytest tests/smoke.py -q",
+            started_at=time.time() - 1,
+        )
+    ]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    await runner._run_process_watcher(_watcher_dict(session_id="proc_short"))
+
+    sent_message = adapter.send.await_args.args[1]
+    assert "Process: proc_short" in sent_message
+    assert "Status: success (finished with exit code 0)" in sent_message
+    assert "Output:\nok\n3 passed" in sent_message
+    assert "Log:" not in sent_message
+    assert len(sent_message) < 500
 
 
 @pytest.mark.asyncio
