@@ -1691,6 +1691,24 @@ DEFAULT_CONFIG = {
         "dispatch_stale_timeout_seconds": 14400,
     },
 
+    # Omega goals — proof-gated multi-agent missions layered over Kanban.
+    # Empty profile names mean "use the active/default profile", matching the
+    # Kanban dispatcher fallback style.
+    "omega_goal": {
+        "enabled": True,
+        "planner_profile": "",
+        "builder_profile": "",
+        "researcher_profile": "",
+        "critic_profile": "",
+        "verifier_profile": "",
+        "synthesizer_profile": "",
+        "concierge_profile": "",
+        "max_workers": 4,
+        "max_tasks": 20,
+        "max_branches": 3,
+        "require_start_confirm": False,
+    },
+
     # execute_code settings — controls the tool used for programmatic tool calls.
     "code_execution": {
         # Execution mode:

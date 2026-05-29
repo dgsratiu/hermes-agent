@@ -4762,6 +4762,9 @@ _PENDING_INPUT_COMMANDS: frozenset[str] = frozenset(
         "steer",
         "plan",
         "goal",
+        "omega-goal",
+        "omega_goal",
+        "omega",
     }
 )
 
@@ -5075,6 +5078,21 @@ def _(rid, params: dict) -> dict:
                 pass
         # Fallback: no active run, treat as next-turn message
         return _ok(rid, {"type": "send", "message": arg})
+
+    if name in {"omega-goal", "omega_goal", "omega"}:
+        if not session:
+            return _err(rid, 4001, "no active session")
+        sid_key = session.get("session_key") or ""
+        if not sid_key:
+            return _err(rid, 4001, "no session key")
+        try:
+            from hermes_cli.omega_goal import run_slash
+
+            cmd_name = "omega-goal" if name == "omega_goal" else name
+            output = run_slash(f"{cmd_name} {arg}".strip(), session_id=sid_key)
+        except Exception as exc:
+            return _err(rid, 5030, f"omega unavailable: {exc}")
+        return _ok(rid, {"type": "exec", "output": output or "(no output)"})
 
     if name == "goal":
         if not session:

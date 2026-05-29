@@ -7848,6 +7848,9 @@ class GatewayRunner:
         if canonical == "kanban":
             return await self._handle_kanban_command(event)
 
+        if canonical in {"omega-goal", "omega"}:
+            return await self._handle_omega_goal_command(event)
+
         if canonical == "retry":
             return await self._handle_retry_command(event)
         
@@ -10015,6 +10018,38 @@ class GatewayRunner:
         if len(output) > 3800:
             output = output[:3800] + "\n" + t("gateway.kanban.truncated_suffix")
         return output or t("gateway.kanban.no_output")
+
+    async def _handle_omega_goal_command(self, event: MessageEvent) -> str:
+        """Handle /omega-goal and /omega through the shared mission module."""
+        import asyncio
+
+        source = event.source
+        platform = getattr(source, "platform", None)
+        platform_str = (
+            platform.value if hasattr(platform, "value") else str(platform or "")
+        ).lower()
+        chat_id = str(getattr(source, "chat_id", "") or "")
+        try:
+            session_entry = self.session_store.get_or_create_session(source)
+            session_id = getattr(session_entry, "session_id", "") or None
+        except Exception:
+            session_id = None
+
+        try:
+            from hermes_cli.omega_goal import run_slash
+
+            output = await asyncio.to_thread(
+                run_slash,
+                event.text or "",
+                session_id=session_id,
+                source_platform=platform_str or None,
+                source_chat=chat_id or None,
+            )
+        except Exception as exc:  # pragma: no cover - defensive gateway boundary
+            return f"(._.) omega error: {exc}"
+        if len(output) > 3800:
+            output = output[:3800] + "\n... (truncated)"
+        return output or "(no output)"
 
     async def _handle_status_command(self, event: MessageEvent) -> str:
         """Handle /status command."""
