@@ -1,7 +1,7 @@
 ---
 name: opencode
-description: "Delegate coding to OpenCode CLI (features, PR review)."
-version: 1.2.0
+description: "Use OpenCode when explicitly requested."
+version: 1.3.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,12 +13,12 @@ metadata:
 
 # OpenCode CLI
 
-Use [OpenCode](https://opencode.ai) as an autonomous coding worker orchestrated by Hermes terminal/process tools. OpenCode is a provider-agnostic, open-source AI coding agent with a TUI and CLI.
+Use [OpenCode](https://opencode.ai) as an autonomous coding worker orchestrated by Hermes terminal/process tools when the user explicitly asks for OpenCode or a local workflow requires it. For resident Hermes/Garden source work, prefer the `codex` skill: Codex `/goal` under tmux in an isolated worktree, followed by resident diff and test verification.
 
 ## When to Use
 
 - User explicitly asks to use OpenCode
-- You want an external coding agent to implement/refactor/review code
+- Codex is unavailable and the user approves OpenCode as the fallback
 - You need long-running coding sessions with progress checks
 - You want parallel task execution in isolated workdirs/worktrees
 
@@ -47,7 +47,8 @@ terminal(command="$HOME/.opencode/bin/opencode run '...'", workdir="~/project", 
 
 ## One-Shot Tasks
 
-Use `opencode run` for bounded, non-interactive tasks:
+Use `opencode run` for bounded, non-interactive tasks only when OpenCode is
+explicitly selected. Do not make this the default for resident source work:
 
 ```
 terminal(command="opencode run 'Add retry logic to API calls and update tests'", workdir="~/project")

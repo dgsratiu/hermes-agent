@@ -8,6 +8,13 @@ description: "How to create skills for Hermes Agent — SKILL.md format, guideli
 
 Skills are the preferred way to add new capabilities to Hermes Agent. They're easier to create than tools, require no code changes to the agent, and can be shared with the community.
 
+When a resident Hermes/Garden agent is changing bundled or optional skills in
+this repository, treat that as source work. Prefer a Codex `/goal` prompt in a
+fresh isolated worktree, then regenerate generated skill docs and run targeted
+validators from the resident session. Direct resident edits are fine for
+user-local skills under `~/.hermes/skills/`, tiny post-review corrections, and
+verification.
+
 ## Should it be a Skill or a Tool?
 
 Make it a **Skill** when:

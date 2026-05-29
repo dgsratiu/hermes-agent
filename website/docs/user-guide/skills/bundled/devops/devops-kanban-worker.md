@@ -1,14 +1,14 @@
 ---
-title: "Kanban Worker — Pitfalls, examples, and edge cases for Hermes Kanban workers"
+title: "Kanban Worker — Run Hermes Kanban worker tasks safely"
 sidebar_label: "Kanban Worker"
-description: "Pitfalls, examples, and edge cases for Hermes Kanban workers"
+description: "Run Hermes Kanban worker tasks safely"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Kanban Worker
 
-Pitfalls, examples, and edge cases for Hermes Kanban workers. The lifecycle itself is auto-injected into every worker's system prompt as KANBAN_GUIDANCE (from agent/prompt_builder.py); this skill is what you load when you want deeper detail on specific scenarios.
+Run Hermes Kanban worker tasks safely.
 
 ## Skill metadata
 
@@ -16,7 +16,9 @@ Pitfalls, examples, and edge cases for Hermes Kanban workers. The lifecycle itse
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/devops/kanban-worker` |
-| Version | `2.0.0` |
+| Version | `2.1.0` |
+| Author | Hermes Agent |
+| License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `kanban`, `multi-agent`, `collaboration`, `workflow`, `pitfalls` |
 | Related skills | [`kanban-orchestrator`](/docs/user-guide/skills/bundled/devops/devops-kanban-orchestrator) |
@@ -47,6 +49,19 @@ If `$HERMES_TENANT` is set, the task belongs to a tenant namespace. When reading
 
 - Good: `business-a: Acme is our biggest customer`
 - Bad (leaks): `Acme is our biggest customer`
+
+## Codex implementation lane
+
+For code, committed docs, tests, migrations, workflow files, or in-repo skills,
+do not default to direct resident implementation. Load the `kanban-codex-lane`
+or `codex` skill, create a Codex `/goal` prompt, launch Codex under tmux in an
+isolated worktree, and keep ownership of verification and Kanban state.
+
+Direct worker tools remain appropriate for `kanban_show`, status checks,
+redacted-log reads, non-code ops, reproducing failures, inspecting diffs, rerun
+tests, and tiny post-review corrections. Codex output is only an input patch:
+you still inspect `git status`, `git diff --stat`, the full diff, and targeted
+test results before `kanban_complete` or `kanban_block`.
 
 ## Good summary + metadata shapes
 
@@ -185,6 +200,7 @@ You can configure the gateway to receive cross-profile Kanban task notifications
 ## Do NOT
 
 - Call `delegate_task` as a substitute for `kanban_create`. `delegate_task` is for short reasoning subtasks inside YOUR run; `kanban_create` is for cross-agent handoffs that outlive one API loop.
+- Directly implement substantial source/code/docs/skills changes when a Codex `/goal` lane is available.
 - Modify files outside `$HERMES_KANBAN_WORKSPACE` unless the task body says to.
 - Create follow-up tasks assigned to yourself — assign to the right specialist.
 - Complete a task you didn't actually finish. Block it instead.

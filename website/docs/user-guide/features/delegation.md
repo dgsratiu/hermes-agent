@@ -8,13 +8,19 @@ description: "Spawn isolated child agents for parallel workstreams with delegate
 
 The `delegate_task` tool spawns child AIAgent instances with isolated context, restricted toolsets, and their own terminal sessions. Each child gets a fresh conversation and works independently — only its final summary enters the parent's context.
 
+For source-changing work, use Codex `/goal` in an isolated git worktree under
+tmux as the default implementation lane. `delegate_task` is still useful for
+research, read-only review, fresh-context analysis, and synthesis. Do not treat
+Hermes subagents as the normal path for code, committed docs, in-repo skills,
+tests, migrations, or diagnostics expected to produce a patch.
+
 ## Single Task
 
 ```python
 delegate_task(
-    goal="Debug why tests fail",
-    context="Error: assertion in test_foo.py line 42",
-    toolsets=["terminal", "file"]
+    goal="Analyze why tests fail and report likely root cause; do not edit files",
+    context="Error: assertion in test_foo.py line 42. Project root: /home/user/myproject.",
+    toolsets=["file"]
 )
 ```
 
@@ -26,7 +32,7 @@ Up to 3 concurrent subagents by default (configurable, no hard ceiling):
 delegate_task(tasks=[
     {"goal": "Research topic A", "toolsets": ["web"]},
     {"goal": "Research topic B", "toolsets": ["web"]},
-    {"goal": "Fix the build", "toolsets": ["terminal", "file"]}
+    {"goal": "Read the build log and summarize likely causes; do not edit files", "toolsets": ["file"]}
 ])
 ```
 
@@ -81,40 +87,32 @@ delegate_task(tasks=[
 ])
 ```
 
-### Code Review + Fix
+### Source Work via Codex /goal
 
-Delegate a review-and-fix workflow to a fresh context:
+For review-and-fix workflows, create a Codex goal in an isolated worktree and
+verify the result from the resident session:
 
-```python
-delegate_task(
-    goal="Review the authentication module for security issues and fix any found",
-    context="""Project at /home/user/webapp.
-    Auth module files: src/auth/login.py, src/auth/jwt.py, src/auth/middleware.py.
-    The project uses Flask, PyJWT, and bcrypt.
-    Focus on: SQL injection, JWT validation, password handling, session management.
-    Fix any issues found and run the test suite (pytest tests/auth/).""",
-    toolsets=["terminal", "file"]
-)
+```text
+/goal Work in this repository only: /home/user/webapp-wt/auth-review.
+Review src/auth/login.py, src/auth/jwt.py, and src/auth/middleware.py for
+security issues. Fix confirmed issues only. Run pytest tests/auth/ -v.
+Report root cause, files changed, exact test results, and risks.
+Stop after producing a reviewable diff and wait for Stop/result hooks.
 ```
 
 ### Multi-File Refactoring
 
-Delegate a large refactoring task that would flood the parent's context:
+Use separate Codex worktrees for independent file sets. Do not launch two
+implementation lanes that can edit the same files:
 
-```python
-delegate_task(
-    goal="Refactor all Python files in src/ to replace print() with proper logging",
-    context="""Project at /home/user/myproject.
-    Use the 'logging' module with logger = logging.getLogger(__name__).
-    Replace print() calls with appropriate log levels:
-    - print(f"Error: ...") -> logger.error(...)
-    - print(f"Warning: ...") -> logger.warning(...)
-    - print(f"Debug: ...") -> logger.debug(...)
-    - Other prints -> logger.info(...)
-    Don't change print() in test files or CLI output.
-    Run pytest after to verify nothing broke.""",
-    toolsets=["terminal", "file"]
-)
+```text
+/goal Work in this repository only: <WORKTREE_A>.
+Refactor only src/service/*.py from print() to logging. Do not touch tests or CLI output.
+Run pytest tests/service/ -v.
+
+/goal Work in this repository only: <WORKTREE_B>.
+Refactor only src/jobs/*.py from print() to logging. Do not touch tests or CLI output.
+Run pytest tests/jobs/ -v.
 ```
 
 ## Batch Mode Details
@@ -148,9 +146,9 @@ The `toolsets` parameter controls what tools the subagent has access to. Choose 
 
 | Toolset Pattern | Use Case |
 |----------------|----------|
-| `["terminal", "file"]` | Code work, debugging, file editing, builds |
+| Codex `/goal` worktree | Source-changing code, docs, tests, migrations, skills |
 | `["web"]` | Research, fact-checking, documentation lookup |
-| `["terminal", "file", "web"]` | Full-stack tasks (default) |
+| `["terminal", "file", "web"]` | Read-only diagnostics or research with shell/web access |
 | `["file"]` | Read-only analysis, code review without execution |
 | `["terminal"]` | System administration, process management |
 
@@ -232,6 +230,7 @@ For **durable long-running work** that must survive interrupts or outlive the cu
 
 - `cronjob` (action=`create`) — schedules a separate agent run; immune to parent-turn interrupts.
 - `terminal(background=True, notify_on_complete=True)` — long-running shell commands that keep running while the agent does other things.
+- Codex `/goal` under `tmux` in an isolated worktree — preferred for real repo implementation work.
 :::
 
 ## Key Properties
@@ -256,6 +255,10 @@ For **durable long-running work** that must survive interrupts or outlive the cu
 | **User interaction** | None (subagents can't clarify) | None |
 
 **Rule of thumb:** Use `delegate_task` when the subtask requires reasoning, judgment, or multi-step problem solving. Use `execute_code` when you need mechanical data processing or scripted workflows.
+
+For source-changing implementation, use Codex `/goal` instead of either:
+Codex gets the repo worktree and objective tracking; Hermes verifies the diff
+and tests afterward.
 
 ## Configuration
 

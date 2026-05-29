@@ -1,7 +1,7 @@
 ---
 name: subagent-driven-development
-description: "Execute plans via delegate_task subagents (2-stage review)."
-version: 1.1.0
+description: "Coordinate Codex lanes with two-stage review."
+version: 1.2.0
 author: Hermes Agent (adapted from obra/superpowers)
 license: MIT
 platforms: [linux, macos, windows]
@@ -15,9 +15,14 @@ metadata:
 
 ## Overview
 
-Execute implementation plans by dispatching fresh subagents per task with systematic two-stage review.
+Execute implementation plans by launching a fresh Codex `/goal` lane per task,
+then applying systematic two-stage review. For source changes, the implementer
+is normally Codex in an isolated worktree. Hermes stays the controller:
+it writes the prompt, monitors the lane, reviews the diff, reruns tests, and
+decides what to accept.
 
-**Core principle:** Fresh subagent per task + two-stage review (spec then quality) = high quality, fast iteration.
+**Core principle:** Fresh Codex lane per task + two-stage review (spec then
+quality) = high quality, inspectable iteration.
 
 ## When to Use
 
@@ -26,12 +31,18 @@ Use this skill when:
 - Tasks are mostly independent
 - Quality and spec compliance are important
 - You want automated review between tasks
+- The work changes code, docs, tests, workflows, or in-repo skills
 
-**vs. manual execution:**
-- Fresh context per task (no confusion from accumulated state)
+Do not use this as permission for the resident to directly implement source
+changes. Direct resident tools remain appropriate for status checks, redacted
+logs, non-code ops, and verification. If Codex is unavailable, say that and use
+the smallest safe fallback workflow.
+
+**vs. direct resident implementation:**
+- Fresh Codex context per task avoids accumulated assumptions
+- Isolated worktrees keep untrusted edits reviewable
 - Automated review process catches issues early
 - Consistent quality checks across all tasks
-- Subagents can ask questions before starting work
 
 ## The Process
 
@@ -51,43 +62,53 @@ todo([
 ])
 ```
 
-**Key:** Read the plan ONCE. Extract everything. Don't make subagents read the plan file — provide the full task text directly in context.
+**Key:** Read the plan ONCE. Extract everything. The Codex prompt may point at
+the plan file, but it must also include the full task text, constraints, allowed
+paths, and verification commands so Codex does not have to infer context from
+the resident conversation.
 
 ### 2. Per-Task Workflow
 
 For EACH task in the plan:
 
-#### Step 1: Dispatch Implementer Subagent
+#### Step 1: Launch Implementer Codex Lane
 
-Use `delegate_task` with complete context:
+Use the `codex` skill's tmux + `/goal` recipe. Create a clean isolated
+worktree, write a complete prompt, launch Codex, and let it produce a diff or
+small commits.
 
-```python
-delegate_task(
-    goal="Implement Task 1: Create User model with email and password_hash fields",
-    context="""
-    TASK FROM PLAN:
-    - Create: src/models/user.py
-    - Add User class with email (str) and password_hash (str) fields
-    - Use bcrypt for password hashing
-    - Include __repr__ for debugging
+Example task prompt:
 
-    FOLLOW TDD:
-    1. Write failing test in tests/models/test_user.py
-    2. Run: pytest tests/models/test_user.py -v (verify FAIL)
-    3. Write minimal implementation
-    4. Run: pytest tests/models/test_user.py -v (verify PASS)
-    5. Run: pytest tests/ -q (verify no regressions)
-    6. Commit: git add -A && git commit -m "feat: add User model with password hashing"
+```text
+/goal Work in this repository only: /abs/path/to/worktree.
 
-    PROJECT CONTEXT:
-    - Python 3.11, Flask app in src/app.py
-    - Existing models in src/models/
-    - Tests use pytest, run from project root
-    - bcrypt already in requirements.txt
-    """,
-    toolsets=['terminal', 'file']
-)
+Implement Task 1: Create User model with email and password_hash fields.
+
+Task from plan:
+- Create: src/models/user.py
+- Add User class with email (str) and password_hash (str) fields
+- Use bcrypt for password hashing
+- Include __repr__ for debugging
+
+Follow TDD:
+1. Write failing test in tests/models/test_user.py.
+2. Run: pytest tests/models/test_user.py -v and confirm it fails for the expected reason.
+3. Write minimal implementation.
+4. Run: pytest tests/models/test_user.py -v and confirm pass.
+5. Run: pytest tests/ -q and report exact result.
+
+Project context:
+- Python 3.11, Flask app in src/app.py
+- Existing models in src/models/
+- Tests use pytest, run from project root
+- bcrypt already in requirements.txt
+
+Output summary, files changed, tests run, and risks. Stop after the diff and
+wait for Stop/result hooks to finish.
 ```
+
+Codex-run tests are advisory. The resident must rerun the relevant tests before
+accepting or merging the lane.
 
 #### Step 2: Dispatch Spec Compliance Reviewer
 
@@ -116,7 +137,9 @@ delegate_task(
 )
 ```
 
-**If spec issues found:** Fix gaps, then re-run spec review. Continue only when spec-compliant.
+**If spec issues found:** Create a focused Codex fix prompt or, for a tiny
+mechanical correction, patch it directly after reviewing the diff. Re-run spec
+review. Continue only when spec-compliant.
 
 #### Step 3: Dispatch Code Quality Reviewer
 
@@ -148,7 +171,8 @@ delegate_task(
 )
 ```
 
-**If quality issues found:** Fix issues, re-review. Continue only when approved.
+**If quality issues found:** Create a focused Codex fix prompt or make a small
+reviewed follow-up edit, then re-review. Continue only when approved.
 
 #### Step 4: Mark Complete
 
@@ -206,10 +230,10 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 - Start implementation without a plan
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed critical/important issues
-- Dispatch multiple implementation subagents for tasks that touch the same files
-- Make subagent read the plan file (provide full text in context instead)
-- Skip scene-setting context (subagent needs to understand where the task fits)
-- Ignore subagent questions (answer before letting them proceed)
+- Start multiple Codex implementation lanes for tasks that touch the same files
+- Make Codex infer the plan from conversation history (provide full task text in the prompt)
+- Skip scene-setting context (Codex needs to understand where the task fits)
+- Ignore Codex questions or trust/hook prompts (answer or decide before letting it proceed)
 - Accept "close enough" on spec compliance
 - Skip review loops (reviewer found issues → implementer fixes → review again)
 - Let implementer self-review replace actual review (both are needed)
@@ -226,22 +250,23 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 
 ### If Reviewer Finds Issues
 
-- Implementer subagent (or a new one) fixes them
+- A focused Codex fix lane (or a tiny reviewed resident follow-up) fixes them
 - Reviewer reviews again
 - Repeat until approved
 - Don't skip the re-review
 
 ### If Subagent Fails a Task
 
-- Dispatch a new fix subagent with specific instructions about what went wrong
-- Don't try to fix manually in the controller session (context pollution)
+- Launch a new focused Codex fix prompt with specific instructions about what went wrong
+- Don't directly rewrite substantial source in the controller session (context pollution and weak audit trail)
 
 ## Efficiency Notes
 
-**Why fresh subagent per task:**
+**Why fresh Codex lane per task:**
 - Prevents context pollution from accumulated state
-- Each subagent gets clean, focused context
+- Each Codex prompt gets clean, focused context
 - No confusion from prior tasks' code or reasoning
+- Each diff is isolated in a worktree/branch until accepted
 
 **Why two-stage review:**
 - Spec review catches under/over-building early
@@ -249,7 +274,7 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 - Catches issues before they compound across tasks
 
 **Cost trade-off:**
-- More subagent invocations (implementer + 2 reviewers per task)
+- More agent invocations (Codex implementer + 2 reviewers per task)
 - But catches issues early (cheaper than debugging compounded problems later)
 
 ## Integration with Other Skills
@@ -258,11 +283,11 @@ git add -A && git commit -m "feat: complete [feature name] implementation"
 
 This skill EXECUTES plans created by the writing-plans skill:
 1. User requirements → writing-plans → implementation plan
-2. Implementation plan → subagent-driven-development → working code
+2. Implementation plan → Codex `/goal` lanes → Hermes review/tests → working code
 
 ### With test-driven-development
 
-Implementer subagents should follow TDD:
+Codex implementer prompts should require TDD:
 1. Write failing test first
 2. Implement minimal code
 3. Verify test passes
@@ -276,7 +301,7 @@ The two-stage review process IS the code review. For final integration review, u
 
 ### With systematic-debugging
 
-If a subagent encounters bugs during implementation:
+If Codex encounters bugs during implementation:
 1. Follow systematic-debugging process
 2. Find root cause before fixing
 3. Write regression test
@@ -289,10 +314,10 @@ If a subagent encounters bugs during implementation:
 [Create todo list with 5 tasks]
 
 --- Task 1: Create User model ---
-[Dispatch implementer subagent]
-  Implementer: "Should email be unique?"
+[Start Codex implementer lane]
+  Codex: "Should email be unique?"
   You: "Yes, email must be unique"
-  Implementer: Implemented, 3/3 tests passing, committed.
+  Codex: Implemented, 3/3 tests passing, diff ready.
 
 [Dispatch spec reviewer]
   Spec reviewer: ✅ PASS — all requirements met
@@ -303,21 +328,21 @@ If a subagent encounters bugs during implementation:
 [Mark Task 1 complete]
 
 --- Task 2: Password hashing ---
-[Dispatch implementer subagent]
-  Implementer: No questions, implemented, 5/5 tests passing.
+[Start Codex implementer lane]
+  Codex: No questions, implemented, 5/5 tests passing.
 
 [Dispatch spec reviewer]
   Spec reviewer: ❌ Missing: password strength validation (spec says "min 8 chars")
 
 [Implementer fixes]
-  Implementer: Added validation, 7/7 tests passing.
+  Codex fix lane: Added validation, 7/7 tests passing.
 
 [Dispatch spec reviewer again]
   Spec reviewer: ✅ PASS
 
 [Dispatch quality reviewer]
   Quality reviewer: Important: Magic number 8, extract to constant
-  Implementer: Extracted MIN_PASSWORD_LENGTH constant
+  Codex fix lane: Extracted MIN_PASSWORD_LENGTH constant
   Quality reviewer: ✅ APPROVED
 
 [Mark Task 2 complete]
@@ -332,7 +357,7 @@ If a subagent encounters bugs during implementation:
 ## Remember
 
 ```
-Fresh subagent per task
+Fresh Codex lane per task
 Two-stage review every time
 Spec compliance FIRST
 Code quality SECOND

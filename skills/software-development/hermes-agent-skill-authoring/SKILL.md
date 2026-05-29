@@ -18,13 +18,13 @@ metadata:
 There are two places a SKILL.md can live:
 
 1. **User-local:** `~/.hermes/skills/<maybe-category>/<name>/SKILL.md` — personal, not shared. Created via `skill_manage(action='create')`.
-2. **In-repo (this skill is about this case):** `/home/bb/hermes-agent/skills/<category>/<name>/SKILL.md` — committed, shipped with the package. Use `write_file` + `git add`. `skill_manage(action='create')` does NOT target this tree.
+2. **In-repo (this skill is about this case):** `/home/bb/hermes-agent/skills/<category>/<name>/SKILL.md` — committed, shipped with the package. Treat this as source work: prefer a Codex `/goal` prompt in an isolated worktree, then let the resident validate, regenerate docs, inspect the diff, and commit. `skill_manage(action='create')` does NOT target this tree.
 
 ## When to Use
 
 - User asks you to add a skill "in this branch / repo / commit"
 - You're committing a reusable workflow that should ship with hermes-agent
-- You're editing an existing skill under `/home/bb/hermes-agent/skills/` (use `patch` for small edits, `write_file` for rewrites; `skill_manage` still works for patch on in-repo skills, but not for `create`)
+- You're editing an existing skill under `/home/bb/hermes-agent/skills/`
 
 ## Required Frontmatter
 
@@ -110,8 +110,11 @@ Pick the closest existing category. Don't invent new top-level categories casual
    ```
    Read 2-3 peer SKILL.md files to match tone and structure.
 2. **Check validator constraints** in `tools/skill_manager_tool.py` if unsure.
-3. **Draft** with `write_file` to `skills/<category>/<name>/SKILL.md`.
-4. **Validate locally**:
+3. **Create a Codex `/goal` prompt** for the skill change unless this is a tiny
+   mechanical follow-up after reviewing a Codex diff. Launch Codex in an
+   isolated worktree and tell it to update the source skill, regenerate
+   generated skill docs, and stop after a reviewable diff.
+4. **Validate locally from the resident session**:
    ```python
    import yaml, re, pathlib
    content = pathlib.Path("skills/<category>/<name>/SKILL.md").read_text()
@@ -122,14 +125,46 @@ Pick the closest existing category. Don't invent new top-level categories casual
    assert len(fm["description"]) <= 1024
    assert len(content) <= 100_000
    ```
-5. **Git add + commit** on the active branch.
-6. **Note:** the CURRENT session's skill loader is cached — `skill_view` / `skills_list` will not see the new skill until a new session. This is expected, not a bug.
+5. **Run generated-doc sync** with `website/scripts/generate-skill-docs.py`.
+6. **Inspect diff and run targeted tests** before accepting Codex output.
+7. **Git add + commit** on the active branch.
+8. **Note:** the CURRENT session's skill loader is cached — `skill_view` / `skills_list` will not see the new skill until a new session. This is expected, not a bug.
+
+## Codex Prompt for In-Repo Skill Changes
+
+Use this pattern for committed skill work:
+
+```text
+/goal Work in this repository only: <WORKTREE>.
+
+Update the in-repo skill at skills/<category>/<name>/SKILL.md.
+
+Requirements:
+- Preserve valid frontmatter: name, description, version, author, license, metadata.hermes.
+- Keep description concise and ending with a period.
+- Match peer structure in skills/<category>/.
+- Put durable workflow guidance in SKILL.md; avoid one-off task notes.
+- Regenerate generated skill docs with website/scripts/generate-skill-docs.py.
+- Run targeted tests: <tests>.
+- Report files changed, validation commands, exact test results, and risks.
+
+Stop after producing a reviewable diff and wait for Stop/result hooks.
+```
+
+Direct resident `patch`/`write_file` is acceptable for a tiny typo or a
+mechanical correction after review. Do not use it as the default for new skills,
+major rewrites, generated docs, or cross-surface workflow changes.
 
 ## Session-Save Skill Parity
 
 When save-time, release, or pre-commit work updates durable repo context, treat repo skills as durable repo surfaces, just like docs. A session that changed reusable skill behavior is incomplete until the in-repo source skill, generated skill docs, and validation trail all agree.
 
 Audit `skills/`, `optional-skills/`, and plugin `SKILL.md` files when a lesson changes agent workflow, tool usage, setup, verification, or common pitfalls. Put the durable instruction in the narrowest matching `SKILL.md`; keep one-off task notes in `docs/context/` instead.
+
+For source-changing save work, make the durable update through a Codex `/goal`
+prompt in an isolated worktree unless the edit is a tiny post-review correction.
+The resident should still run the docs/skill generation and validation checks
+itself before committing.
 
 After any in-repo `SKILL.md` change, run `website/scripts/generate-skill-docs.py` so `website/docs/user-guide/skills/`, `website/docs/reference/skills-catalog.md`, `website/docs/reference/optional-skills-catalog.md`, and `website/sidebars.ts` stay in sync with source. Do not hand-edit generated skill docs unless you are changing the generator itself.
 
@@ -141,14 +176,14 @@ Do not edit `~/.hermes/skills/` to satisfy an in-repo skill change. User-local s
 
 ## Editing Existing In-Repo Skills
 
-- **Small fix (typo, added pitfall, tightened trigger):** `skill_manage(action='patch', name=..., old_string=..., new_string=...)` works fine on in-repo skills.
-- **Major rewrite:** `write_file` the whole SKILL.md. `skill_manage(action='edit')` also works but requires supplying the full new content.
-- **Adding supporting files:** `write_file` to `skills/<category>/<name>/references/<file>.md`, `templates/<file>`, or `scripts/<file>`. `skill_manage(action='write_file')` also works and enforces the references/templates/scripts/assets subdir allowlist.
+- **Small post-review fix (typo, added pitfall, tightened trigger):** direct resident `patch` or `skill_manage(action='patch', name=..., old_string=..., new_string=...)` is acceptable.
+- **Major rewrite:** use a Codex `/goal` lane. Direct `write_file` or `skill_manage(action='edit')` is a fallback only when Codex is unavailable or the user explicitly asks for resident implementation.
+- **Adding supporting files:** prefer a Codex `/goal` lane for `references/<file>.md`, `templates/<file>`, or `scripts/<file>` additions. Direct `skill_manage(action='write_file')` remains acceptable for tiny mechanical additions and enforces the references/templates/scripts/assets subdir allowlist.
 - **Always commit** the edit — in-repo skills are source, not runtime state.
 
 ## Common Pitfalls
 
-1. **Using `skill_manage(action='create')` for an in-repo skill.** It writes to `~/.hermes/skills/`, not the repo tree. Use `write_file` for in-repo creation.
+1. **Using `skill_manage(action='create')` for an in-repo skill.** It writes to `~/.hermes/skills/`, not the repo tree. Use a Codex `/goal` lane for substantive in-repo creation, with direct resident file tools only as a tiny fallback.
 
 2. **Leading whitespace before `---`.** The validator checks `content.startswith("---")`; any leading blank line or BOM fails validation.
 
@@ -172,5 +207,6 @@ Do not edit `~/.hermes/skills/` to satisfy an in-repo skill change. User-local s
 - [ ] Total file ≤ 100,000 chars (aim for 8-15k)
 - [ ] Structure: `# Title` → `## Overview` → `## When to Use` → body → `## Common Pitfalls` → `## Verification Checklist`
 - [ ] `related_skills` references resolve in-repo (or are explicitly OK to be user-local)
+- [ ] Codex `/goal` was used for substantive source skill changes, or the direct-edit fallback reason is documented
 - [ ] Generated skill docs and catalogs were regenerated after any in-repo `SKILL.md` change
 - [ ] `git add skills/<category>/<name>/ && git commit` completed on the intended branch

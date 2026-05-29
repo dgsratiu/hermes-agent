@@ -8,6 +8,12 @@ description: "When and how to use subagent delegation — patterns for parallel 
 
 Hermes can spawn isolated child agents to work on tasks in parallel. Each subagent gets its own conversation, terminal session, and toolset. Only the final summary comes back — intermediate tool calls never enter your context window.
 
+For source-changing work, prefer a Codex `/goal` prompt in an isolated git
+worktree under tmux. Use Hermes `delegate_task` for research, read-only review,
+fresh-context analysis, and synthesis. Codex should be the default implementation
+lane for code, committed docs, in-repo skills, tests, migrations, and diagnostics
+likely to produce a patch.
+
 For the full feature reference, see [Subagent Delegation](/user-guide/features/delegation).
 
 ---
@@ -24,7 +30,7 @@ For the full feature reference, see [Subagent Delegation](/user-guide/features/d
 - Single tool call → just use the tool directly
 - Mechanical multi-step work with logic between steps → `execute_code`
 - Tasks needing user interaction → subagents can't use `clarify`
-- Quick file edits → do them directly
+- Source edits, docs edits, skill edits, tests, and implementation planning → create a Codex `/goal` prompt in an isolated worktree
 - Durable long-running work that must outlive the current turn → `cronjob` or `terminal(background=True, notify_on_complete=True)`. `delegate_task` is **synchronous**: if the parent turn is interrupted, active children are cancelled and their work is discarded.
 
 ---
@@ -68,33 +74,41 @@ All three run concurrently. Each subagent searches the web independently and ret
 
 ---
 
-## Pattern: Code Review
+## Pattern: Source Work via Codex /goal
 
-Delegate a security review to a fresh-context subagent that approaches the code without preconceptions:
+For code, docs, tests, or skill changes, make the implementation lane a Codex
+goal. The resident writes the prompt and verifies the result.
 
+```bash
+git -C "$REPO" fetch origin main
+git -C "$REPO" worktree add -b codex/auth-review "$WORKTREE" origin/main
 ```
-Review the authentication module at src/auth/ for security issues.
-Check for SQL injection, JWT validation problems, password handling,
-and session management. Fix anything you find and run the tests.
-```
 
-The key is the `context` field — it must include everything the subagent needs:
-
-```python
-delegate_task(
-    goal="Review src/auth/ for security issues and fix any found",
-    context="""Project at /home/user/webapp. Python 3.11, Flask, PyJWT, bcrypt.
-    Auth files: src/auth/login.py, src/auth/jwt.py, src/auth/middleware.py
-    Test command: pytest tests/auth/ -v
-    Focus on: SQL injection, JWT validation, password hashing, session management.
-    Fix issues found and verify tests pass.""",
-    toolsets=["terminal", "file"]
-)
+```text
+/goal Work in this repository only: <WORKTREE>.
+Review src/auth/ for security issues and fix any confirmed issue.
+Focus on SQL injection, JWT validation, password handling, and session management.
+Run: pytest tests/auth/ -v.
+Report root cause, files changed, tests run, and risks. Stop after the diff.
+Wait for Stop/result hooks before finalizing.
 ```
 
 :::warning The Context Problem
-Subagents know **absolutely nothing** about your conversation. They start completely fresh. If you delegate "fix the bug we were discussing," the subagent has no idea what bug you mean. Always pass file paths, error messages, project structure, and constraints explicitly.
+Codex and subagents know **absolutely nothing** about your conversation. They
+start fresh. If you hand off "fix the bug we were discussing," they have no idea
+what bug you mean. Always pass file paths, error messages, project structure,
+constraints, and verification commands explicitly.
 :::
+
+After Codex stops, the resident verifies:
+
+```bash
+git -C "$WORKTREE" status --short --branch
+git -C "$WORKTREE" diff --stat
+git -C "$WORKTREE" diff
+git -C "$WORKTREE" diff --check
+(cd "$WORKTREE" && pytest tests/auth/ -v)
+```
 
 ---
 
@@ -119,42 +133,30 @@ Each subagent researches one option independently. Because they're isolated, the
 
 ## Pattern: Multi-File Refactoring
 
-Split a large refactoring task across parallel subagents, each handling a different part of the codebase:
+Split a large refactoring task across separate Codex worktrees only when the
+file sets are independent. Do not run two implementation lanes against the same
+files.
 
-```python
-delegate_task(tasks=[
-    {
-        "goal": "Refactor all API endpoint handlers to use the new response format",
-        "context": """Project at /home/user/api-server.
-        Files: src/handlers/users.py, src/handlers/auth.py, src/handlers/billing.py
-        Old format: return {"data": result, "status": "ok"}
-        New format: return APIResponse(data=result, status=200).to_dict()
-        Import: from src.responses import APIResponse
-        Run tests after: pytest tests/handlers/ -v""",
-        "toolsets": ["terminal", "file"]
-    },
-    {
-        "goal": "Update all client SDK methods to handle the new response format",
-        "context": """Project at /home/user/api-server.
-        Files: sdk/python/client.py, sdk/python/models.py
-        Old parsing: result = response.json()["data"]
-        New parsing: result = response.json()["data"] (same key, but add status code checking)
-        Also update sdk/python/tests/test_client.py""",
-        "toolsets": ["terminal", "file"]
-    },
-    {
-        "goal": "Update API documentation to reflect the new response format",
-        "context": """Project at /home/user/api-server.
-        Docs at: docs/api/. Format: Markdown with code examples.
-        Update all response examples from old format to new format.
-        Add a 'Response Format' section to docs/api/overview.md explaining the schema.""",
-        "toolsets": ["terminal", "file"]
-    }
-])
+```text
+Codex lane A:
+/goal Work in <WORKTREE_A>. Refactor only src/handlers/users.py,
+src/handlers/auth.py, src/handlers/billing.py to use APIResponse.
+Run pytest tests/handlers/ -v.
+
+Codex lane B:
+/goal Work in <WORKTREE_B>. Update only sdk/python/client.py,
+sdk/python/models.py, and sdk/python/tests/test_client.py for response handling.
+Run pytest sdk/python/tests/test_client.py -v.
+
+Codex lane C:
+/goal Work in <WORKTREE_C>. Update only docs/api/ response examples and add the
+Response Format section to docs/api/overview.md. Do not touch code.
 ```
 
 :::tip
-Each subagent gets its own terminal session. They can work on the same project directory without stepping on each other — as long as they're editing different files. If two subagents might touch the same file, handle that file yourself after the parallel work completes.
+Each Codex lane gets its own worktree and tmux session. If two lanes might touch
+the same file, serialize them or merge the first accepted diff before launching
+the second.
 :::
 
 ---
@@ -207,8 +209,9 @@ Choose toolsets based on what the subagent needs:
 | Task type | Toolsets | Why |
 |-----------|----------|-----|
 | Web research | `["web"]` | web_search + web_extract only |
-| Code work | `["terminal", "file"]` | Shell access + file operations |
-| Full-stack | `["terminal", "file", "web"]` | Everything except messaging |
+| Source-changing code/docs/skills work | Codex `/goal` worktree | Durable objective tracking and isolated diff |
+| Read-only code review | `["file"]` or Codex read-only prompt | Fresh context without mutation |
+| Full-stack implementation | Codex `/goal` worktree, optionally with web context in prompt | Keeps edits isolated |
 | Read-only analysis | `["file"]` | Can only read files, no shell |
 
 Restricting toolsets keeps the subagent focused and prevents accidental side effects (like a research subagent running shell commands).
@@ -246,11 +249,15 @@ delegation:
 
 **Be specific in goals.** "Fix the bug" is too vague. "Fix the TypeError in api/handlers.py line 47 where process_request() receives None from parse_body()" gives the subagent enough to work with.
 
-**Include file paths.** Subagents don't know your project structure. Always include absolute paths to relevant files, the project root, and the test command.
+**Include file paths.** Codex and subagents don't know your project structure.
+Always include absolute paths to relevant files, the project root, allowed scope,
+forbidden paths, and the test command.
 
 **Use delegation for context isolation.** Sometimes you want a fresh perspective. Delegating forces you to articulate the problem clearly, and the subagent approaches it without the assumptions that built up in your conversation.
 
-**Check results.** Subagent summaries are just that — summaries. If a subagent says "fixed the bug and tests pass," verify by running the tests yourself or reading the diff.
+**Check results.** Codex and subagent summaries are just that — summaries. If an
+agent says "fixed the bug and tests pass," verify by running the tests yourself
+and reading the diff.
 
 ---
 

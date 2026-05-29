@@ -26,11 +26,11 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 
 | Skill | Description | Path |
 |-------|-------------|------|
-| [`claude-code`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code) | Delegate coding to Claude Code CLI (features, PRs). | `autonomous-ai-agents/claude-code` |
-| [`codex`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-codex) | Delegate coding to OpenAI Codex CLI (features, PRs). | `autonomous-ai-agents/codex` |
+| [`claude-code`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-claude-code) | Use Claude Code when explicitly requested. | `autonomous-ai-agents/claude-code` |
+| [`codex`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-codex) | Run Codex /goal lanes for source work. | `autonomous-ai-agents/codex` |
 | [`hermes-agent`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-hermes-agent) | Configure, extend, or contribute to Hermes Agent. | `autonomous-ai-agents/hermes-agent` |
-| [`kanban-codex-lane`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-kanban-codex-lane) | Use when a Hermes Kanban worker wants to run Codex CLI as an isolated implementation lane while Hermes keeps ownership of task lifecycle, reconciliation, testing, and handoff. | `autonomous-ai-agents/kanban-codex-lane` |
-| [`opencode`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode) | Delegate coding to OpenCode CLI (features, PR review). | `autonomous-ai-agents/opencode` |
+| [`kanban-codex-lane`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-kanban-codex-lane) | Use when running Codex as a Kanban implementation lane. | `autonomous-ai-agents/kanban-codex-lane` |
+| [`opencode`](/docs/user-guide/skills/bundled/autonomous-ai-agents/autonomous-ai-agents-opencode) | Use OpenCode when explicitly requested. | `autonomous-ai-agents/opencode` |
 
 ## creative
 
@@ -67,8 +67,8 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 
 | Skill | Description | Path |
 |-------|-------------|------|
-| [`kanban-orchestrator`](/docs/user-guide/skills/bundled/devops/devops-kanban-orchestrator) | Decomposition playbook + anti-temptation rules for an orchestrator profile routing work through Kanban. The "don't do the work yourself" rule and the basic lifecycle are auto-injected into every kanban worker's system prompt; this skill... | `devops/kanban-orchestrator` |
-| [`kanban-worker`](/docs/user-guide/skills/bundled/devops/devops-kanban-worker) | Pitfalls, examples, and edge cases for Hermes Kanban workers. The lifecycle itself is auto-injected into every worker's system prompt as KANBAN_GUIDANCE (from agent/prompt_builder.py); this skill is what you load when you want deeper det... | `devops/kanban-worker` |
+| [`kanban-orchestrator`](/docs/user-guide/skills/bundled/devops/devops-kanban-orchestrator) | Route Kanban work without doing it yourself. | `devops/kanban-orchestrator` |
+| [`kanban-worker`](/docs/user-guide/skills/bundled/devops/devops-kanban-worker) | Run Hermes Kanban worker tasks safely. | `devops/kanban-worker` |
 | [`webhook-subscriptions`](/docs/user-guide/skills/bundled/devops/devops-webhook-subscriptions) | Webhook subscriptions: event-driven agent runs. | `devops/webhook-subscriptions` |
 
 ## dogfood
@@ -187,14 +187,14 @@ If a skill is missing from this list but present in the repo, the catalog is reg
 | [`hermes-agent-skill-authoring`](/docs/user-guide/skills/bundled/software-development/software-development-hermes-agent-skill-authoring) | Author in-repo SKILL.md: frontmatter, validator, structure. | `software-development/hermes-agent-skill-authoring` |
 | [`hermes-s6-container-supervision`](/docs/user-guide/skills/bundled/software-development/software-development-hermes-s6-container-supervision) | Modify, debug, or extend the s6-overlay supervision tree inside the Hermes Agent Docker image — adding new services, debugging profile gateways, understanding the Architecture B main-program pattern. | `software-development/hermes-s6-container-supervision` |
 | [`node-inspect-debugger`](/docs/user-guide/skills/bundled/software-development/software-development-node-inspect-debugger) | Debug Node.js via --inspect + Chrome DevTools Protocol CLI. | `software-development/node-inspect-debugger` |
-| [`plan`](/docs/user-guide/skills/bundled/software-development/software-development-plan) | Plan mode: write markdown plan to .hermes/plans/, no exec. | `software-development/plan` |
+| [`plan`](/docs/user-guide/skills/bundled/software-development/software-development-plan) | Plan mode: write Codex-ready markdown plans. | `software-development/plan` |
 | [`python-debugpy`](/docs/user-guide/skills/bundled/software-development/software-development-python-debugpy) | Debug Python: pdb REPL + debugpy remote (DAP). | `software-development/python-debugpy` |
 | [`requesting-code-review`](/docs/user-guide/skills/bundled/software-development/software-development-requesting-code-review) | Pre-commit review: security scan, quality gates, auto-fix. | `software-development/requesting-code-review` |
 | [`spike`](/docs/user-guide/skills/bundled/software-development/software-development-spike) | Throwaway experiments to validate an idea before build. | `software-development/spike` |
-| [`subagent-driven-development`](/docs/user-guide/skills/bundled/software-development/software-development-subagent-driven-development) | Execute plans via delegate_task subagents (2-stage review). | `software-development/subagent-driven-development` |
+| [`subagent-driven-development`](/docs/user-guide/skills/bundled/software-development/software-development-subagent-driven-development) | Coordinate Codex lanes with two-stage review. | `software-development/subagent-driven-development` |
 | [`systematic-debugging`](/docs/user-guide/skills/bundled/software-development/software-development-systematic-debugging) | 4-phase root cause debugging: understand bugs before fixing. | `software-development/systematic-debugging` |
 | [`test-driven-development`](/docs/user-guide/skills/bundled/software-development/software-development-test-driven-development) | TDD: enforce RED-GREEN-REFACTOR, tests before code. | `software-development/test-driven-development` |
-| [`writing-plans`](/docs/user-guide/skills/bundled/software-development/software-development-writing-plans) | Write implementation plans: bite-sized tasks, paths, code. | `software-development/writing-plans` |
+| [`writing-plans`](/docs/user-guide/skills/bundled/software-development/software-development-writing-plans) | Write Codex-ready implementation plans. | `software-development/writing-plans` |
 
 ## yuanbao
 

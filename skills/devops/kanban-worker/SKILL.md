@@ -1,7 +1,9 @@
 ---
 name: kanban-worker
-description: Pitfalls, examples, and edge cases for Hermes Kanban workers. The lifecycle itself is auto-injected into every worker's system prompt as KANBAN_GUIDANCE (from agent/prompt_builder.py); this skill is what you load when you want deeper detail on specific scenarios.
-version: 2.0.0
+description: "Run Hermes Kanban worker tasks safely."
+version: 2.1.0
+author: Hermes Agent
+license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
@@ -29,6 +31,19 @@ If `$HERMES_TENANT` is set, the task belongs to a tenant namespace. When reading
 
 - Good: `business-a: Acme is our biggest customer`
 - Bad (leaks): `Acme is our biggest customer`
+
+## Codex implementation lane
+
+For code, committed docs, tests, migrations, workflow files, or in-repo skills,
+do not default to direct resident implementation. Load the `kanban-codex-lane`
+or `codex` skill, create a Codex `/goal` prompt, launch Codex under tmux in an
+isolated worktree, and keep ownership of verification and Kanban state.
+
+Direct worker tools remain appropriate for `kanban_show`, status checks,
+redacted-log reads, non-code ops, reproducing failures, inspecting diffs, rerun
+tests, and tiny post-review corrections. Codex output is only an input patch:
+you still inspect `git status`, `git diff --stat`, the full diff, and targeted
+test results before `kanban_complete` or `kanban_block`.
 
 ## Good summary + metadata shapes
 
@@ -167,6 +182,7 @@ You can configure the gateway to receive cross-profile Kanban task notifications
 ## Do NOT
 
 - Call `delegate_task` as a substitute for `kanban_create`. `delegate_task` is for short reasoning subtasks inside YOUR run; `kanban_create` is for cross-agent handoffs that outlive one API loop.
+- Directly implement substantial source/code/docs/skills changes when a Codex `/goal` lane is available.
 - Modify files outside `$HERMES_KANBAN_WORKSPACE` unless the task body says to.
 - Create follow-up tasks assigned to yourself — assign to the right specialist.
 - Complete a task you didn't actually finish. Block it instead.

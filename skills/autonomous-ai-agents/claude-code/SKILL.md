@@ -1,7 +1,7 @@
 ---
 name: claude-code
-description: "Delegate coding to Claude Code CLI (features, PRs)."
-version: 2.2.0
+description: "Use Claude Code when explicitly requested."
+version: 2.3.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,7 @@ metadata:
 
 # Claude Code — Hermes Orchestration Guide
 
-Delegate coding tasks to [Claude Code](https://code.claude.com/docs/en/cli-reference) (Anthropic's autonomous coding agent CLI) via the Hermes terminal. Claude Code v2.x can read files, write code, run shell commands, spawn subagents, and manage git workflows autonomously.
+Use [Claude Code](https://code.claude.com/docs/en/cli-reference) (Anthropic's autonomous coding agent CLI) via the Hermes terminal when the user explicitly asks for Claude Code or a repo-specific workflow requires it. For resident Hermes/Garden source work, prefer the `codex` skill: Codex `/goal` under tmux in an isolated worktree, followed by resident diff and test verification.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ Delegate coding tasks to [Claude Code](https://code.claude.com/docs/en/cli-refer
 
 Hermes interacts with Claude Code in two fundamentally different ways. Choose based on the task.
 
-### Mode 1: Print Mode (`-p`) — Non-Interactive (PREFERRED for most tasks)
+### Mode 1: Print Mode (`-p`) — Non-Interactive (small explicit fallback)
 
 Print mode runs a one-shot task, returns the result, and exits. No PTY needed. No interactive prompts. This is the cleanest integration path.
 
@@ -39,13 +39,13 @@ terminal(command="claude -p 'Add error handling to all API calls in src/' --allo
 ```
 
 **When to use print mode:**
-- One-shot coding tasks (fix a bug, add a feature, refactor)
+- Tiny one-shot tasks where the user explicitly asked for Claude Code
 - CI/CD automation and scripting
 - Structured data extraction with `--json-schema`
 - Piped input processing (`cat file | claude -p "analyze this"`)
 - Any task where you don't need multi-turn conversation
 
-**Print mode skips ALL interactive dialogs** — no workspace trust prompt, no permission confirmations. This makes it ideal for automation.
+**Print mode skips ALL interactive dialogs** — no workspace trust prompt, no permission confirmations. Do not use it as the default for real repo implementation; prefer supervised Codex `/goal` worktrees.
 
 ### Mode 2: Interactive PTY via tmux — Multi-Turn Sessions
 

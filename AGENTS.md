@@ -13,6 +13,39 @@ source .venv/bin/activate   # or: source venv/bin/activate
 `$HOME/.hermes/hermes-agent/venv` (for worktrees that share a venv with the
 main checkout).
 
+## Resident Source-Work Default
+
+For coding, source docs, in-repo skills, implementation plans, test changes,
+diagnostics expected to produce a patch, and any other repo mutation, resident
+Hermes/Garden agents should default to creating a self-contained Codex `/goal`
+prompt and running Codex in a fresh isolated git worktree under tmux. The
+resident owns the prompt, trust/hook decisions, diff review, tests, commit, and
+handoff. Codex owns the implementation attempt.
+
+Direct resident tools are still appropriate for status checks, redacted logs,
+non-code ops, `/founders` notes, reading files, reproducing failures, and
+post-Codex verification. Tiny mechanical follow-up edits after reviewing a
+Codex diff are acceptable; substantial code/source/docs/skills edits should be
+prompted to Codex instead of implemented directly by the resident.
+
+Preferred launch recipe:
+
+```bash
+git -C "$REPO" fetch origin main
+git -C "$REPO" worktree add -b "$BRANCH" "$WORKTREE" origin/main
+tmux new-session -d -s "$SESSION" -c "$WORKTREE" 'codex --enable goals'
+tmux capture-pane -t "$SESSION" -p -S -80   # handle trust/hooks deliberately
+tmux load-buffer -b codex-goal "$PROMPT_FILE"
+tmux paste-buffer -b codex-goal -t "$SESSION"
+tmux send-keys -t "$SESSION" Enter
+```
+
+Wait until Codex reports the goal achieved or blocked, then wait for any
+Stop/result hooks to finish before reconciling. Verify from the resident
+session with `git status`, `git diff --stat`, full diff review, and the repo's
+targeted tests. Treat `codex exec` as a legacy/small one-shot fallback only;
+use tmux + interactive `/goal` for real repo work.
+
 ## Project Structure
 
 File counts shift constantly — don't treat the tree below as exhaustive.
@@ -744,6 +777,10 @@ Key config knobs (under `delegation:` in `config.yaml`):
 Synchronicity rule: delegate_task is **not** durable. For long-running
 work that must outlive the current turn, use `cronjob` or
 `terminal(background=True, notify_on_complete=True)` instead.
+
+For code/source/docs/skills implementation, `delegate_task` is not the default
+lane. Use the Codex `/goal` worktree pattern above, then use Hermes resident
+tools or read-only subagents for review and verification.
 
 ---
 

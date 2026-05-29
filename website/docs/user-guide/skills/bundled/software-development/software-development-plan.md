@@ -1,14 +1,14 @@
 ---
-title: "Plan — Plan mode: write markdown plan to"
+title: "Plan — Plan mode: write Codex-ready markdown plans"
 sidebar_label: "Plan"
-description: "Plan mode: write markdown plan to"
+description: "Plan mode: write Codex-ready markdown plans"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Plan
 
-Plan mode: write markdown plan to .hermes/plans/, no exec.
+Plan mode: write Codex-ready markdown plans.
 
 ## Skill metadata
 
@@ -16,7 +16,7 @@ Plan mode: write markdown plan to .hermes/plans/, no exec.
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/software-development/plan` |
-| Version | `1.0.0` |
+| Version | `1.1.0` |
 | Author | Hermes Agent |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -31,7 +31,9 @@ The following is the complete skill definition that Hermes loads when this skill
 
 # Plan Mode
 
-Use this skill when the user wants a plan instead of execution.
+Use this skill when the user wants a plan instead of execution. For code,
+documentation, test, workflow, or skill changes, the plan should be ready to
+hand to Codex `/goal` in an isolated worktree.
 
 ## Core behavior
 
@@ -55,8 +57,11 @@ Include, when relevant:
 - Files likely to change
 - Tests / validation
 - Risks, tradeoffs, and open questions
+- A Codex `/goal` handoff prompt for source-changing work
 
-If the task is code-related, include exact file paths, likely test targets, and verification steps.
+If the task is code-related, include exact file paths, likely test targets,
+verification steps, and the worktree/branch assumptions Codex should receive.
+Do not implement directly from plan mode.
 
 ## Save location
 

@@ -4,6 +4,32 @@ Thank you for contributing to Hermes Agent! This guide covers everything you nee
 
 ---
 
+## Agent Contributor Workflow
+
+When a resident Hermes/Garden agent is doing contributor work in this repo,
+source-changing tasks should be delegated to Codex by default. That includes
+code, committed docs, generated docs, in-repo skills, tests, migrations,
+implementation plans, and diagnostics likely to end in a patch.
+
+Default pattern:
+
+1. Create a fresh git worktree and branch from the intended base.
+2. Write a self-contained Codex `/goal` prompt with scope, forbidden paths,
+   repo invariants, acceptance criteria, tests, and expected output.
+3. Launch Codex interactively under `tmux` in the isolated worktree.
+4. Handle trust and hook prompts deliberately; wait for Goal achieved plus
+   Stop/result hooks.
+5. Verify from the resident session: inspect status, diff/stat, full diff, and
+   run targeted tests or docs/skill validators.
+6. Commit only after resident verification.
+
+Direct resident tools are still fine for status checks, redacted logs,
+non-code ops, reading files, reproducing failures, and final verification.
+Treat `codex exec` as a legacy or tiny one-shot fallback; use tmux plus
+interactive `/goal` for real repo work.
+
+---
+
 ## Contribution Priorities
 
 We value contributions in this order:

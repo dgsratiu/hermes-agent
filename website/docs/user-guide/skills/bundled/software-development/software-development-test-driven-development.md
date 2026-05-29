@@ -16,7 +16,7 @@ TDD: enforce RED-GREEN-REFACTOR, tests before code.
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/software-development/test-driven-development` |
-| Version | `1.1.0` |
+| Version | `1.2.0` |
 | Author | Hermes Agent (adapted from obra/superpowers) |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -38,6 +38,10 @@ Write the test first. Watch it fail. Write minimal code to pass.
 **Core principle:** If you didn't watch the test fail, you don't know if it tests the right thing.
 
 **Violating the letter of the rules is violating the spirit of the rules.**
+
+For source-changing work, put this TDD contract inside the Codex `/goal`
+prompt and let Codex implement in an isolated worktree. The resident may run
+tests and inspect diffs directly, but should not become the default implementer.
 
 ## When to Use
 
@@ -317,25 +321,20 @@ terminal("pytest tests/ -q")
 
 ### With delegate_task
 
-When dispatching subagents for implementation, enforce TDD in the goal:
+When reviewing or fallback-dispatching Hermes subagents, enforce TDD in the
+goal. For normal implementation, use the same text in a Codex `/goal` prompt
+through the `codex` skill:
 
-```python
-delegate_task(
-    goal="Implement [feature] using strict TDD",
-    context="""
-    Follow test-driven-development skill:
-    1. Write failing test FIRST
-    2. Run test to verify it fails
-    3. Write minimal code to pass
-    4. Run test to verify it passes
-    5. Refactor if needed
-    6. Commit
-
-    Project test command: pytest tests/ -q
-    Project structure: [describe relevant files]
-    """,
-    toolsets=['terminal', 'file']
-)
+```text
+/goal Work in this repository only: <WORKTREE>.
+Implement <feature> using strict TDD:
+1. Write failing test FIRST.
+2. Run the test and verify it fails for the expected reason.
+3. Write minimal code to pass.
+4. Run the test and verify it passes.
+5. Refactor only while tests stay green.
+6. Run: pytest tests/ -q.
+Report exact commands and results.
 ```
 
 ### With systematic-debugging

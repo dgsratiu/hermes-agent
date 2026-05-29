@@ -10,6 +10,11 @@ Skills are on-demand knowledge documents that teach Hermes how to handle specifi
 
 For the full technical reference, see [Skills System](/user-guide/features/skills).
 
+For normal user-local skills, Hermes can create and edit files directly under
+`~/.hermes/skills/`. For bundled or optional skills committed to this repo,
+resident agents should prefer Codex `/goal` in an isolated worktree, then
+regenerate skill docs and validate from the resident session.
+
 ---
 
 ## Finding Skills

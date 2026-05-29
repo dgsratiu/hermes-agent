@@ -1,14 +1,14 @@
 ---
-title: "Kanban Orchestrator"
+title: "Kanban Orchestrator — Route Kanban work without doing it yourself"
 sidebar_label: "Kanban Orchestrator"
-description: "Decomposition playbook + anti-temptation rules for an orchestrator profile routing work through Kanban"
+description: "Route Kanban work without doing it yourself"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Kanban Orchestrator
 
-Decomposition playbook + anti-temptation rules for an orchestrator profile routing work through Kanban. The "don't do the work yourself" rule and the basic lifecycle are auto-injected into every kanban worker's system prompt; this skill is the deeper playbook when you're specifically playing the orchestrator role.
+Route Kanban work without doing it yourself.
 
 ## Skill metadata
 
@@ -16,7 +16,9 @@ Decomposition playbook + anti-temptation rules for an orchestrator profile routi
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/devops/kanban-orchestrator` |
-| Version | `3.0.0` |
+| Version | `3.1.0` |
+| Author | Hermes Agent |
+| License | MIT |
 | Platforms | linux, macos, windows |
 | Tags | `kanban`, `multi-agent`, `orchestration`, `routing` |
 | Related skills | [`kanban-worker`](/docs/user-guide/skills/bundled/devops/devops-kanban-worker) |
@@ -70,6 +72,7 @@ Your job description says "route, don't execute." The rules that enforce that:
 - **Run independent lanes in parallel.** If two cards do not need each other's output, leave them unlinked so the dispatcher can fan them out. Link only true data dependencies.
 - **Never create dependent work as independent ready cards.** If a card must wait for another card, pass `parents=[...]` in the original `kanban_create` call. Do not create it first and link it later, and do not rely on prose like "wait for T1" inside the body.
 - **If no specialist fits the available profiles, ask the user which profile to create or which existing profile to use.** Do not invent profile names; the dispatcher will silently drop unknown assignees.
+- **For source-changing cards, ask the worker to use Codex.** Coding, committed docs, tests, migrations, and in-repo skill cards should say: launch Codex `/goal` under tmux in an isolated worktree, then verify from the Hermes worker before completion.
 - **Decompose, route, and summarize — that's the whole job.**
 
 ## Decomposition playbook

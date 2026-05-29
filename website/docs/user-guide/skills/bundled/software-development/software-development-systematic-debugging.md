@@ -16,7 +16,7 @@ description: "4-phase root cause debugging: understand bugs before fixing"
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/software-development/systematic-debugging` |
-| Version | `1.1.0` |
+| Version | `1.2.0` |
 | Author | Hermes Agent (adapted from obra/superpowers) |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -38,6 +38,12 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 **Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
 
 **Violating the letter of this process is violating the spirit of debugging.**
+
+For repo diagnostics that may produce a code, docs, test, workflow, or skill
+change, the resident should gather enough evidence to write a precise Codex
+`/goal` prompt, then run Codex in an isolated worktree. Direct resident tools
+are still appropriate for reproduction, redacted-log reads, status checks, and
+post-Codex verification.
 
 ## The Iron Law
 
@@ -344,27 +350,35 @@ Use these Hermes tools during Phase 1:
 - **`terminal`** — Run tests, check git history, reproduce bugs
 - **`web_search`/`web_extract`** — Research error messages, library docs
 
-### With delegate_task
+### With Codex /goal
 
-For complex multi-component debugging, dispatch investigation subagents:
+For complex multi-component debugging that may need a repo change, hand the
+investigation and fix to Codex after the resident has captured the exact error
+and reproduction command:
 
-```python
-delegate_task(
-    goal="Investigate why [specific test/behavior] fails",
-    context="""
-    Follow systematic-debugging skill:
-    1. Read the error message carefully
-    2. Reproduce the issue
-    3. Trace the data flow to find root cause
-    4. Report findings — do NOT fix yet
+```text
+/goal Work in this repository only: <WORKTREE>.
+Investigate and fix why <specific test/behavior> fails.
 
-    Error: [paste full error]
-    File: [path to failing code]
-    Test command: [exact command]
-    """,
-    toolsets=['terminal', 'file']
-)
+Follow systematic-debugging:
+1. Read the error message carefully.
+2. Reproduce with: <exact command>.
+3. Trace data flow to identify root cause.
+4. Write a regression test before changing production code.
+5. Fix the root cause only.
+6. Run: <targeted test> and <broader suite>.
+
+Error:
+<paste full error>
+
+Relevant files:
+<paths>
+
+Report root cause, files changed, tests run, and risks. Stop after the diff.
 ```
+
+Use `delegate_task` for read-only fresh-context investigation or review when no
+source edit should be made.
 
 ### With test-driven-development
 

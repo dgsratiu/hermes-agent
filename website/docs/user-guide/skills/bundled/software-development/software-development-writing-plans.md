@@ -1,14 +1,14 @@
 ---
-title: "Writing Plans — Write implementation plans: bite-sized tasks, paths, code"
+title: "Writing Plans — Write Codex-ready implementation plans"
 sidebar_label: "Writing Plans"
-description: "Write implementation plans: bite-sized tasks, paths, code"
+description: "Write Codex-ready implementation plans"
 ---
 
 {/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
 
 # Writing Plans
 
-Write implementation plans: bite-sized tasks, paths, code.
+Write Codex-ready implementation plans.
 
 ## Skill metadata
 
@@ -16,7 +16,7 @@ Write implementation plans: bite-sized tasks, paths, code.
 |---|---|
 | Source | Bundled (installed by default) |
 | Path | `skills/software-development/writing-plans` |
-| Version | `1.1.0` |
+| Version | `1.2.0` |
 | Author | Hermes Agent (adapted from obra/superpowers) |
 | License | MIT |
 | Platforms | linux, macos, windows |
@@ -33,22 +33,27 @@ The following is the complete skill definition that Hermes loads when this skill
 
 ## Overview
 
-Write comprehensive implementation plans assuming the implementer has zero context for the codebase and questionable taste. Document everything they need: which files to touch, complete code, testing commands, docs to check, how to verify. Give them bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
+Write comprehensive implementation plans assuming the implementer is a fresh
+Codex `/goal` lane with zero conversation context. Document everything Codex
+needs: which files to touch, complete constraints, testing commands, docs to
+check, how to verify, and where to stop. Give Codex bite-sized tasks. DRY.
+YAGNI. TDD. Frequent review points.
 
 Assume the implementer is a skilled developer but knows almost nothing about the toolset or problem domain. Assume they don't know good test design very well.
 
-**Core principle:** A good plan makes implementation obvious. If someone has to guess, the plan is incomplete.
+**Core principle:** A good plan makes the Codex prompt obvious. If Codex has to
+guess, the plan is incomplete.
 
 ## When to Use
 
 **Always use before:**
 - Implementing multi-step features
 - Breaking down complex requirements
-- Delegating to subagents via subagent-driven-development
+- Delegating source work to Codex `/goal` lanes
 
 **Don't skip when:**
 - Feature seems simple (assumptions cause bugs)
-- You plan to implement it yourself (future you needs guidance)
+- You plan to launch Codex yourself (future verification needs guidance)
 - Working alone (documentation matters)
 
 ## Bite-Sized Task Granularity
@@ -89,7 +94,7 @@ Every plan MUST start with:
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
+> **For Hermes:** Execute source changes through Codex `/goal` lanes in isolated worktrees. Use Hermes subagents for read-only review and Hermes resident tools for verification.
 
 **Goal:** [One sentence describing what this builds]
 
@@ -211,13 +216,21 @@ Check:
 - [ ] No missing context
 - [ ] DRY, YAGNI, TDD principles applied
 
-### Step 7: Save the Plan
+### Step 7: Save or Hand Off the Plan
 
-```bash
-mkdir -p docs/plans
-# Save plan to docs/plans/YYYY-MM-DD-feature-name.md
-git add docs/plans/
-git commit -m "docs: add implementation plan for [feature]"
+If the plan is a committed repo artifact under `docs/plans/`, prefer handing
+the write to Codex with a small `/goal` prompt in an isolated worktree. If the
+plan is a local session artifact under `.hermes/plans/`, direct resident
+`write_file` is fine.
+
+Codex prompt shape for a committed plan:
+
+```text
+/goal Work in this repository only: <WORKTREE>.
+Create docs/plans/YYYY-MM-DD-feature-name.md from the implementation plan below.
+Do not change source code. Follow existing docs/plans style. Commit only if asked.
+Plan content:
+<paste plan>
 ```
 
 ## Principles
@@ -290,12 +303,12 @@ git commit -m "type: description"
 
 ## Execution Handoff
 
-After saving the plan, offer the execution approach:
+After saving or drafting the plan, offer the execution approach:
 
-**"Plan complete and saved. Ready to execute using subagent-driven-development — I'll dispatch a fresh subagent per task with two-stage review (spec compliance then code quality). Shall I proceed?"**
+**"Plan complete. Ready to execute through Codex `/goal` lanes in isolated worktrees, with Hermes spec and quality review after each task."**
 
 When executing, use the `subagent-driven-development` skill:
-- Fresh `delegate_task` per task with full context
+- Fresh Codex `/goal` lane per task with full context
 - Spec compliance review after each task
 - Code quality review after spec passes
 - Proceed only when both reviews approve
@@ -308,8 +321,9 @@ Exact file paths
 Complete code (copy-pasteable)
 Exact commands with expected output
 Verification steps
+Codex-ready prompt context
 DRY, YAGNI, TDD
 Frequent commits
 ```
 
-**A good plan makes implementation obvious.**
+**A good plan makes the Codex handoff obvious.**

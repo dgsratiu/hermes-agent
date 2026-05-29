@@ -1,7 +1,7 @@
 ---
 name: kanban-codex-lane
-description: Use when a Hermes Kanban worker wants to run Codex CLI as an isolated implementation lane while Hermes keeps ownership of task lifecycle, reconciliation, testing, and handoff.
-version: 1.0.0
+description: Use when running Codex as a Kanban implementation lane.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -14,7 +14,7 @@ metadata:
 
 ## Overview
 
-This skill defines the lightweight Hermes+Codex dual-lane convention for Kanban workers. Hermes is always the task owner: it calls `kanban_show`, decides whether Codex is appropriate, creates or selects an isolated workspace, starts and monitors Codex, reconciles any diff, runs verification, and writes the final `kanban_complete` or `kanban_block` handoff. Codex is an input lane only. Codex output is not a task completion signal, not a trusted reviewer, and not allowed to write durable Kanban state directly.
+This skill defines the lightweight Hermes+Codex dual-lane convention for Kanban workers. For coding, source, documentation, test, and in-repo skill work, Codex `/goal` in an isolated worktree is the default implementation lane. Hermes is always the task owner: it calls `kanban_show`, decides whether Codex is appropriate, creates or selects an isolated workspace, starts and monitors Codex, reconciles any diff, runs verification, and writes the final `kanban_complete` or `kanban_block` handoff. Codex is an input lane only. Codex output is not a task completion signal, not a trusted reviewer, and not allowed to write durable Kanban state directly.
 
 The convention exists so a Hermes worker can use Codex for bounded implementation help without changing the dispatcher. The dispatcher must still spawn Hermes workers. A worker may optionally spawn Codex inside its own run, then accept, partially accept, or reject the lane after independent review and tests.
 
@@ -33,7 +33,8 @@ Do not use the Codex lane when any of these are true:
 - The task requires human judgment that is not already captured in the Kanban body.
 - The worker lacks repo access, Codex auth, or time to reconcile the result.
 - The change touches secrets, credential stores, private user data, or production order-entry systems.
-- A small direct edit is faster and safer than spawning another agent.
+- The task is only a status check, redacted-log read, non-code ops action, or final verification rerun.
+- The only edit is a tiny mechanical follow-up after Hermes has already reviewed a Codex diff.
 - The task is research-only and should produce a written handoff rather than a diff.
 - The worker would be tempted to mark Done based only on Codex self-report.
 
@@ -100,7 +101,39 @@ Authentication can be via `OPENAI_API_KEY` or the Codex CLI OAuth state (often `
 
 ## Mode Selection
 
-Use `codex exec` for bounded one-shot edits where Codex should exit on its own:
+Use Codex `/goal` under `tmux` for real repo work. This is the default for
+Kanban tasks that change code, source docs, tests, workflows, or skills because
+the resident worker can supervise trust prompts, Stop/result hooks, and ongoing
+goal state without losing the lane to a one-shot process.
+
+Launch interactively in the isolated worktree:
+
+```python
+terminal(
+    command="tmux new-session -d -s \"$SESSION\" -c \"$WORKTREE\" 'codex --enable goals'",
+    workdir=WORKTREE,
+)
+terminal(command="tmux capture-pane -t \"$SESSION\" -p -S -80")
+```
+
+Handle trust and hook prompts before pasting the goal. Trust only the isolated
+worktree. Approve hooks only after reading their repo-owned paths and confirming
+they do not expose secrets or perform uncontrolled external actions.
+
+Paste a self-contained `/goal` prompt:
+
+Example `/goal` objective text to paste into Codex:
+
+```text
+/goal Work in this repository only: <WORKTREE>. Task: <TASK_ID> <TITLE>.
+Hermes owns the Kanban lifecycle; do not call Hermes kanban tools or messaging.
+Create small commits on branch <BRANCH>. Follow the PMB safety constraints in the prompt.
+Run the requested verification commands and report exact outputs. Stop after producing a diff and summary.
+Wait for Stop/result hooks to finish before claiming the lane is ready for Hermes review.
+```
+
+Use `codex exec` only as a legacy/small fallback for tiny bounded edits or
+throwaway scratch work where Codex should exit on its own:
 
 ```python
 terminal(
@@ -112,18 +145,9 @@ terminal(
 )
 ```
 
-Use Codex `/goal` only for broader multi-step work that benefits from durable objective tracking. Launch interactively in a PTY/tmux session or with `codex --enable goals` if the feature is disabled by default. Keep the goal objective self-contained: repo path, task id, safety constraints, allowed scope, acceptance criteria, tests, and commit expectations.
-
-Example `/goal` objective text to paste into Codex:
-
-```text
-/goal Work in this repository only: <WORKTREE>. Task: <TASK_ID> <TITLE>.
-Hermes owns the Kanban lifecycle; do not call Hermes kanban tools or messaging.
-Create small commits on branch <BRANCH>. Follow the PMB safety constraints in the prompt.
-Run the requested verification commands and report exact outputs. Stop after producing a diff and summary.
-```
-
-Do not use `--yolo` for prediction-market-bot or safety-sensitive repos. Prefer `--full-auto` inside the isolated worktree, then rely on Hermes reconciliation.
+Do not use `--yolo` for prediction-market-bot, Garden, Semantage, Hermes, or
+safety-sensitive repos. If `--full-auto` is used, keep it inside the isolated
+worktree and rely on Hermes reconciliation.
 
 ## Prompt Construction
 
@@ -153,7 +177,19 @@ PMB safety constraints:
 
 ## Monitoring, Timeout, and Kill Behavior
 
-Start long Codex lanes in the background with PTY and completion notification:
+Monitor tmux without editing the same worktree:
+
+```python
+terminal(command="tmux capture-pane -t \"$SESSION\" -p -S -200")
+terminal(command="tmux list-panes -t \"$SESSION\" -F '#{pane_id} dead=#{pane_dead} status=#{pane_dead_status} cmd=#{pane_current_command}'")
+```
+
+Treat Codex as done only when the pane shows the goal is achieved or blocked,
+and any Stop/result hook output or artifacts are complete. A Codex self-report
+is not acceptance; it only means the lane is ready for Hermes review.
+
+If a legacy `codex exec` fallback was launched through `terminal(background=True)`,
+monitor it through `process`:
 
 ```python
 result = terminal(
@@ -166,7 +202,7 @@ result = terminal(
 session_id = result["session_id"]
 ```
 
-Monitor without interfering:
+For background-process fallback sessions, poll without interfering:
 
 ```python
 process(action="poll", session_id=session_id)
@@ -187,6 +223,7 @@ Kill conditions:
 Kill command:
 
 ```python
+terminal(command="tmux kill-session -t \"$SESSION\"")
 process(action="kill", session_id=session_id)
 ```
 
@@ -221,10 +258,10 @@ Include this object under `metadata.codex_lane` for every task where the lane wa
 {
   "codex_lane": {
     "used": true,
-    "mode": "exec | goal | skipped",
+    "mode": "goal | exec | skipped",
     "worktree": "/absolute/path/to/codex/worktree",
     "branch": "codex/t_caa69668/20260508100000",
-    "command": "codex exec --full-auto ...",
+    "command": "tmux session codex --enable goals ...",
     "result": "accepted | rejected | partial | timed_out",
     "accepted_commits": ["<sha1>", "<sha2>"],
     "rejected_reason": "empty when fully accepted; otherwise concrete reason",
@@ -262,7 +299,7 @@ For tasks that intentionally skip Codex:
 2. Running Codex in the user's dirty main checkout. Always isolate in a worktree/branch.
 3. Letting Codex own Kanban. Codex may summarize progress, but Hermes writes board state.
 4. Forgetting PMB safety invariants in the prompt. Missing safety text is a lane setup failure.
-5. Using `/goal` for quick edits. Prefer `codex exec` unless durable multi-step continuation is needed.
+5. Using `codex exec` for real repo work. Prefer tmux + interactive `/goal`; keep `exec` for tiny legacy fallbacks.
 6. Killing a stuck lane without recording why. `rejected_reason` must explain the decision.
 7. Accepting broad unrelated cleanup because tests pass. Reject or cherry-pick only the scoped changes.
 

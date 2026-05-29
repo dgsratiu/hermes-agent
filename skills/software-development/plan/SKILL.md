@@ -1,7 +1,7 @@
 ---
 name: plan
-description: "Plan mode: write markdown plan to .hermes/plans/, no exec."
-version: 1.0.0
+description: "Plan mode: write Codex-ready markdown plans."
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,7 +13,9 @@ metadata:
 
 # Plan Mode
 
-Use this skill when the user wants a plan instead of execution.
+Use this skill when the user wants a plan instead of execution. For code,
+documentation, test, workflow, or skill changes, the plan should be ready to
+hand to Codex `/goal` in an isolated worktree.
 
 ## Core behavior
 
@@ -37,8 +39,11 @@ Include, when relevant:
 - Files likely to change
 - Tests / validation
 - Risks, tradeoffs, and open questions
+- A Codex `/goal` handoff prompt for source-changing work
 
-If the task is code-related, include exact file paths, likely test targets, and verification steps.
+If the task is code-related, include exact file paths, likely test targets,
+verification steps, and the worktree/branch assumptions Codex should receive.
+Do not implement directly from plan mode.
 
 ## Save location
 

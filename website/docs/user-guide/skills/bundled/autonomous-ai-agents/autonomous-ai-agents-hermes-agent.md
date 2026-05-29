@@ -48,6 +48,21 @@ People use Hermes for software development, research, system administration, dat
 
 **Docs:** https://hermes-agent.nousresearch.com/docs/
 
+## Source-Work Default
+
+When a resident Hermes/Garden/Semantage agent needs to change a repository,
+prefer the `codex` skill: create a self-contained Codex `/goal` prompt, run it
+under tmux in a fresh isolated git worktree, then verify the diff and tests from
+the resident session. This applies to code, committed docs, tests, migrations,
+implementation plans, diagnostics likely to produce patches, and in-repo
+`SKILL.md` edits.
+
+Direct resident tools remain appropriate for status checks, redacted logs,
+non-code ops, reading files, reproducing failures, `/founders` notes, and
+post-Codex verification. Use direct file edits only for tiny mechanical
+follow-ups after reviewing a Codex diff or when the user explicitly asks for a
+resident-only fallback.
+
 ## Quick Start
 
 ```bash
@@ -552,7 +567,7 @@ Voice commands: `/voice on` (voice-to-voice), `/voice tts` (always voice), `/voi
 
 ## Spawning Additional Hermes Instances
 
-Run additional Hermes processes as fully independent subprocesses — separate sessions, tools, and environments.
+Run additional Hermes processes as fully independent subprocesses — separate sessions, tools, and environments. For source-changing implementation, prefer Codex `/goal` worktrees over spawning another Hermes process unless the user specifically wants a Hermes worker.
 
 ### When to Use This vs delegate_task
 
@@ -562,7 +577,7 @@ Run additional Hermes processes as fully independent subprocesses — separate s
 | Duration | Minutes (bounded by parent loop) | Hours/days |
 | Tool access | Subset of parent's tools | Full tool access |
 | Interactive | No | Yes (PTY mode) |
-| Use case | Quick parallel subtasks | Long autonomous missions |
+| Use case | Quick read-only subtasks | Long autonomous missions |
 
 ### One-Shot Mode
 
@@ -581,14 +596,14 @@ Hermes uses prompt_toolkit, which requires a real terminal. Use tmux for interac
 # Start
 terminal(command="tmux new-session -d -s agent1 -x 120 -y 40 'hermes'", timeout=10)
 
-# Wait for startup, then send a message
-terminal(command="sleep 8 && tmux send-keys -t agent1 'Build a FastAPI auth service' Enter", timeout=15)
+# Wait for startup, then send a read-only or ops message
+terminal(command="sleep 8 && tmux send-keys -t agent1 'Inspect the service logs and summarize likely causes' Enter", timeout=15)
 
 # Read output
 terminal(command="sleep 20 && tmux capture-pane -t agent1 -p", timeout=5)
 
 # Send follow-up
-terminal(command="tmux send-keys -t agent1 'Add rate limiting middleware' Enter", timeout=5)
+terminal(command="tmux send-keys -t agent1 'Check whether the same error appears in yesterday logs' Enter", timeout=5)
 
 # Exit
 terminal(command="tmux send-keys -t agent1 '/exit' Enter && sleep 2 && tmux kill-session -t agent1", timeout=10)
@@ -597,13 +612,13 @@ terminal(command="tmux send-keys -t agent1 '/exit' Enter && sleep 2 && tmux kill
 ### Multi-Agent Coordination
 
 ```
-# Agent A: backend
+# Agent A: backend read-only discovery
 terminal(command="tmux new-session -d -s backend -x 120 -y 40 'hermes -w'", timeout=10)
-terminal(command="sleep 8 && tmux send-keys -t backend 'Build REST API for user management' Enter", timeout=15)
+terminal(command="sleep 8 && tmux send-keys -t backend 'Inspect backend API shape and write a summary; do not edit files' Enter", timeout=15)
 
-# Agent B: frontend
+# Agent B: frontend read-only discovery
 terminal(command="tmux new-session -d -s frontend -x 120 -y 40 'hermes -w'", timeout=10)
-terminal(command="sleep 8 && tmux send-keys -t frontend 'Build React dashboard for user management' Enter", timeout=15)
+terminal(command="sleep 8 && tmux send-keys -t frontend 'Inspect frontend routing and write a summary; do not edit files' Enter", timeout=15)
 
 # Check progress, relay context between them
 terminal(command="tmux capture-pane -t backend -p | tail -30", timeout=5)
@@ -622,8 +637,8 @@ terminal(command="tmux new-session -d -s resumed 'hermes --resume 20260225_14305
 
 ### Tips
 
-- **Prefer `delegate_task` for quick subtasks** — less overhead than spawning a full process
-- **Use `-w` (worktree mode)** when spawning agents that edit code — prevents git conflicts
+- **Prefer `delegate_task` for quick read-only subtasks** — less overhead than spawning a full process
+- **Use Codex `/goal` worktrees for source edits** — `hermes -w` is a fallback for explicitly Hermes-owned implementation
 - **Set timeouts** for one-shot mode — complex tasks can take 5-10 minutes
 - **Use `hermes chat -q` for fire-and-forget** — no PTY needed
 - **Use tmux for interactive sessions** — raw PTY mode has `\r` vs `\n` issues with prompt_toolkit
@@ -650,6 +665,9 @@ before continuing its own loop. Isolated context + terminal session.
 - **Not durable.** If the parent is interrupted, the child is
   cancelled. For work that must outlive the turn, use `cronjob` or
   `terminal(background=True, notify_on_complete=True)`.
+- **Not the default for source edits.** Use Codex `/goal` in an isolated
+  worktree for code, docs, tests, and in-repo skill implementation; use
+  `delegate_task` for read-only review or research.
 
 Config: `delegation.*` in `config.yaml`.
 

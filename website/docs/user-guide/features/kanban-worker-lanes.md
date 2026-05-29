@@ -84,6 +84,15 @@ The shape every kanban worker takes today: the assignee is a profile name, the d
 
 When you create profiles for your fleet, choose names that match the *role* you want the orchestrator to route to. The orchestrator (when there is one) discovers your profile names via `hermes profile list` — there's no fixed roster the system assumes (see the [`kanban-orchestrator`](https://github.com/NousResearch/hermes-agent/blob/main/skills/devops/kanban-orchestrator/SKILL.md) skill for the orchestrator side of the contract).
 
+For code, committed docs, tests, migrations, or in-repo skill cards, a Hermes
+profile worker should normally use the
+[`kanban-codex-lane`](https://github.com/NousResearch/hermes-agent/blob/main/skills/autonomous-ai-agents/kanban-codex-lane/SKILL.md)
+skill to launch Codex `/goal` under tmux in an isolated worktree. The Hermes
+worker remains the lifecycle owner: it monitors Codex, waits for Stop/result
+hooks, inspects the diff, reruns tests, and only then calls `kanban_complete`
+or `kanban_block`. Direct worker edits are reserved for status checks,
+redacted-log reads, non-code ops, verification, or tiny post-review corrections.
+
 ### Orchestrator profile lane
 
 A specialisation of the profile lane: an orchestrator is a Hermes profile whose toolset includes `kanban` but excludes `terminal` / `file` / `code` / `web` for implementation. Its job is decomposing a high-level goal into child tasks via `kanban_create` + `kanban_link` and stepping back. The orchestrator skill encodes the anti-temptation rules.

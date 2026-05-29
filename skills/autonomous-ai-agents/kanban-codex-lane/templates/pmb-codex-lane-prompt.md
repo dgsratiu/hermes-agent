@@ -1,8 +1,10 @@
 # PMB Codex Lane Prompt Template
 
-Use this template when a Hermes Kanban worker chooses to run Codex as an implementation lane for prediction-market-bot. Fill every bracketed field before launching Codex. Do not include secrets.
+Use this template when a Hermes Kanban worker runs Codex `/goal` as an implementation lane for prediction-market-bot. Fill every bracketed field before launching Codex under tmux. Do not include secrets.
 
 ```text
+/goal Work in this repository only: [CODEX_WORKTREE_PATH].
+
 You are Codex CLI running as an input lane for a Hermes Kanban worker.
 
 Ownership:
@@ -54,4 +56,6 @@ Required final report:
 - Tests/commands run with exit codes.
 - Safety constraints checked.
 - Known risks or incomplete items.
+
+Stop after producing a reviewable diff/report. Wait for Stop/result hooks to finish before considering the goal complete.
 ```
