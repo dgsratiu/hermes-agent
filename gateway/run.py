@@ -644,6 +644,148 @@ def _wrap_current_message_with_observed_context(message: Any, observed_context: 
     return message
 
 
+_TRACE_CONTEXT_ITEM_LIMIT = 12
+
+
+def _trace_content_preview(content: Any, limit: int = 240) -> str:
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                parts.append(str(part.get("text") or ""))
+            elif isinstance(part, dict) and part.get("type") in {"image", "image_url", "input_image"}:
+                parts.append("[image]")
+        content = "\n".join(parts)
+    text = " ".join(str(content or "").split())
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
+    return text
+
+
+def _build_gateway_context_manifest(
+    history: List[Dict[str, Any]],
+    *,
+    channel_prompt: Optional[str] = None,
+    limit: int = _TRACE_CONTEXT_ITEM_LIMIT,
+) -> Dict[str, Any]:
+    """Describe which stored transcript rows this wake loaded, and why."""
+
+    separate_observed_context = _uses_telegram_observed_group_context(channel_prompt)
+    items: list[dict[str, Any]] = []
+    loaded_count = 0
+    observed_count = 0
+
+    for msg in history or []:
+        role = msg.get("role")
+        if not role or role in {"session_meta", "system"}:
+            continue
+        content = msg.get("content")
+        has_tool_context = role == "tool" or "tool_calls" in msg or "tool_call_id" in msg
+        if not content and not has_tool_context:
+            continue
+
+        observed = bool(msg.get("observed"))
+        if separate_observed_context and observed and role == "user":
+            loaded_via = "observed_context_prefix"
+            reason = (
+                "observed=True Telegram group row was withheld from replay and "
+                "prepended to the current addressed message as context-only."
+            )
+            observed_count += 1
+        else:
+            loaded_via = "conversation_history"
+            reason = "Prior same-session transcript row replayed in conversation_history."
+
+        loaded_count += 1
+        item = {
+            "role": str(role),
+            "observed": observed,
+            "loaded_via": loaded_via,
+            "reason": reason,
+            "content": _trace_content_preview(content, limit=220),
+        }
+        timestamp = msg.get("timestamp")
+        if timestamp is not None:
+            item["timestamp"] = timestamp
+        platform_message_id = msg.get("platform_message_id") or msg.get("message_id")
+        if platform_message_id:
+            item["platform_message_id"] = str(platform_message_id)
+        tool_name = msg.get("tool_name")
+        if tool_name:
+            item["tool_name"] = str(tool_name)
+        items.append(item)
+
+    if loaded_count == 0:
+        status = "none_recorded"
+        reason = (
+            "No prior usable same-session transcript rows existed before this wake."
+        )
+    elif observed_count > 0:
+        status = "observed_group_context"
+        reason = (
+            "Observed Telegram group rows and ordinary same-session history were "
+            "accounted for before the current wake ran."
+        )
+    else:
+        status = "same_session_history"
+        reason = (
+            "Only ordinary same-session transcript rows were loaded; no observed "
+            "Telegram group rows were present for this wake."
+        )
+
+    return {
+        "status": status,
+        "loaded_count": loaded_count,
+        "observed_count": observed_count,
+        "reason": reason,
+        "items": items[-int(limit):],
+    }
+
+
+def _record_platform_wake_trace(
+    session_db: Any,
+    *,
+    event: Any,
+    session_id: str,
+    message_text: str,
+    history: List[Dict[str, Any]],
+    channel_prompt: Optional[str],
+    agent_persisted: bool,
+) -> Optional[Dict[str, Any]]:
+    """Persist platform ids + context manifest after a gateway turn."""
+
+    if session_db is None or not hasattr(session_db, "record_platform_wake_trace"):
+        return None
+    source = getattr(event, "source", None)
+    platform = getattr(getattr(source, "platform", None), "value", None)
+    if not platform or platform == "local":
+        return None
+
+    timestamp = getattr(event, "timestamp", None)
+    try:
+        triggered_at = timestamp.timestamp() if timestamp is not None else time.time()
+    except Exception:
+        triggered_at = time.time()
+
+    return session_db.record_platform_wake_trace(
+        platform=str(platform),
+        session_id=str(session_id),
+        message_text=message_text,
+        platform_update_id=getattr(event, "platform_update_id", None),
+        platform_message_id=getattr(event, "message_id", None),
+        chat_id=getattr(source, "chat_id", None),
+        chat_type=getattr(source, "chat_type", None),
+        user_id=getattr(source, "user_id", None),
+        user_name=getattr(source, "user_name", None),
+        context_manifest=_build_gateway_context_manifest(
+            history,
+            channel_prompt=channel_prompt,
+        ),
+        triggered_at=triggered_at,
+        agent_persisted=agent_persisted,
+    )
+
+
 def _last_transcript_timestamp(history: Optional[List[Dict[str, Any]]]) -> Any:
     """Return the ``timestamp`` of the last usable transcript row, if any.
 
@@ -9181,6 +9323,19 @@ class GatewayRunner:
                             session_entry.session_id, entry,
                             skip_db=agent_persisted,
                         )
+
+            try:
+                _record_platform_wake_trace(
+                    self._session_db,
+                    event=event,
+                    session_id=session_entry.session_id,
+                    message_text=message_text,
+                    history=history,
+                    channel_prompt=getattr(event, "channel_prompt", None),
+                    agent_persisted=bool(agent_result.get("agent_persisted", False)),
+                )
+            except Exception as _trace_exc:
+                logger.debug("platform wake trace persistence failed: %s", _trace_exc)
             
             # Token counts and model are now persisted by the agent directly.
             # Keep only last_prompt_tokens here for context-window tracking and

@@ -1,5 +1,6 @@
 """Tests for hermes_state.py — SessionDB SQLite CRUD, FTS5 search, export."""
 
+import json
 import time
 import pytest
 from pathlib import Path
@@ -357,6 +358,53 @@ class TestMessageStorage:
         assert user_msg.get("message_id") == "abc-123"
         # Assistant row had no platform id — must not gain one spuriously.
         assert "message_id" not in assistant_msg
+
+    def test_record_platform_wake_trace_links_message_and_context_manifest(self, db):
+        db.create_session(session_id="s_trace", source="telegram")
+        user_row = db.append_message("s_trace", role="user", content="hello bot")
+        db.append_message("s_trace", role="assistant", content="hello")
+
+        result = db.record_platform_wake_trace(
+            platform="telegram",
+            session_id="s_trace",
+            message_text="hello bot",
+            platform_update_id=1003,
+            platform_message_id=42,
+            chat_id=-100,
+            chat_type="group",
+            user_id=222,
+            user_name="Bob",
+            context_manifest={
+                "status": "observed_group_context",
+                "loaded_count": 1,
+                "observed_count": 1,
+                "reason": "test",
+                "items": [{"role": "user", "observed": True}],
+            },
+            triggered_at=1780240000.0,
+            agent_persisted=True,
+        )
+
+        assert result == {
+            "wake_id": "telegram:-100:1003",
+            "session_id": "s_trace",
+            "message_row_id": user_row,
+        }
+        msg = db._conn.execute(
+            "SELECT platform_message_id FROM messages WHERE id = ?",
+            (user_row,),
+        ).fetchone()
+        assert msg["platform_message_id"] == "42"
+        trace = db._conn.execute(
+            "SELECT * FROM platform_wake_traces WHERE wake_id = ?",
+            ("telegram:-100:1003",),
+        ).fetchone()
+        assert trace["platform_update_id"] == "1003"
+        assert trace["platform_message_id"] == "42"
+        assert trace["chat_id"] == "-100"
+        assert trace["message_row_id"] == user_row
+        assert trace["agent_persisted"] == 1
+        assert json.loads(trace["context_manifest"])["loaded_count"] == 1
 
     def test_replace_messages_preserves_platform_message_id(self, db):
         """``rewrite_transcript`` (which goes through replace_messages) must

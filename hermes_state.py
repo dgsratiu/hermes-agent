@@ -276,6 +276,24 @@ CREATE TABLE IF NOT EXISTS messages (
     observed INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS platform_wake_traces (
+    wake_id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    platform_update_id TEXT,
+    platform_message_id TEXT,
+    chat_id TEXT,
+    chat_type TEXT,
+    user_id TEXT,
+    user_name TEXT,
+    session_id TEXT NOT NULL REFERENCES sessions(id),
+    message_row_id INTEGER REFERENCES messages(id),
+    message_text TEXT,
+    triggered_at REAL NOT NULL,
+    context_manifest TEXT,
+    agent_persisted INTEGER DEFAULT 0,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS state_meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -620,6 +638,17 @@ class SessionDB:
             )
         except sqlite3.OperationalError as exc:
             logger.debug("idx_messages_platform_msg_id create skipped: %s", exc)
+        try:
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_platform_wake_traces_session_msg "
+                "ON platform_wake_traces(session_id, message_row_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_platform_wake_traces_triggered "
+                "ON platform_wake_traces(triggered_at DESC)"
+            )
+        except sqlite3.OperationalError as exc:
+            logger.debug("platform_wake_traces index create skipped: %s", exc)
 
         # ── Schema version bookkeeping ─────────────────────────────────
         # Bump to current so future data migrations (if any) can gate on
@@ -1574,6 +1603,160 @@ class SessionDB:
                     (session_id,),
                 )
             return msg_id
+
+        return self._execute_write(_do)
+
+    @staticmethod
+    def _platform_trace_wake_id(
+        *,
+        platform: str,
+        chat_id: str | None,
+        platform_update_id: str | None,
+        platform_message_id: str | None,
+        session_id: str,
+        message_row_id: int | None,
+    ) -> str:
+        """Stable id for one inbound platform wake."""
+
+        platform = str(platform or "platform")
+        if platform_update_id:
+            return f"{platform}:{chat_id or 'unknown'}:{platform_update_id}"
+        if platform_message_id:
+            return f"{platform}:{chat_id or 'unknown'}:message:{platform_message_id}"
+        return f"{platform}:{session_id}:{message_row_id or 'unknown'}"
+
+    def record_platform_wake_trace(
+        self,
+        *,
+        platform: str,
+        session_id: str,
+        message_text: str | None = None,
+        platform_update_id: str | int | None = None,
+        platform_message_id: str | int | None = None,
+        chat_id: str | int | None = None,
+        chat_type: str | None = None,
+        user_id: str | int | None = None,
+        user_name: str | None = None,
+        context_manifest: dict[str, Any] | None = None,
+        triggered_at: float | None = None,
+        agent_persisted: bool = False,
+    ) -> Dict[str, Any]:
+        """Persist platform wake metadata and link it to the session row.
+
+        Gateway agents often flush the user message before the platform layer
+        can attach message/update ids. This post-run trace table preserves the
+        original platform identifiers without writing a duplicate transcript
+        row, and backfills ``messages.platform_message_id`` on the matched row
+        when possible.
+        """
+
+        platform_s = str(platform or "").strip() or "platform"
+        session_id_s = str(session_id or "").strip()
+        if not session_id_s:
+            raise ValueError("session_id is required")
+        message_text_s = str(message_text) if message_text is not None else None
+        platform_update_s = (
+            str(platform_update_id) if platform_update_id is not None else None
+        )
+        platform_message_s = (
+            str(platform_message_id) if platform_message_id is not None else None
+        )
+        chat_id_s = str(chat_id) if chat_id is not None else None
+        user_id_s = str(user_id) if user_id is not None else None
+        triggered = float(triggered_at if triggered_at is not None else time.time())
+        context_json = (
+            json.dumps(context_manifest, ensure_ascii=False, separators=(",", ":"))
+            if context_manifest is not None
+            else None
+        )
+
+        def _do(conn):
+            rows = conn.execute(
+                """
+                SELECT id, content
+                  FROM messages
+                 WHERE session_id = ?
+                   AND role = 'user'
+                 ORDER BY id DESC
+                 LIMIT 25
+                """,
+                (session_id_s,),
+            ).fetchall()
+            message_row_id = None
+            if rows:
+                if message_text_s is not None:
+                    for row in rows:
+                        if self._decode_content(row["content"]) == message_text_s:
+                            message_row_id = int(row["id"])
+                            break
+                elif message_row_id is None:
+                    message_row_id = int(rows[0]["id"])
+
+            if message_row_id is not None and platform_message_s:
+                conn.execute(
+                    """
+                    UPDATE messages
+                       SET platform_message_id = ?
+                     WHERE id = ?
+                       AND (platform_message_id IS NULL OR platform_message_id = '')
+                    """,
+                    (platform_message_s, message_row_id),
+                )
+
+            wake_id = self._platform_trace_wake_id(
+                platform=platform_s,
+                chat_id=chat_id_s,
+                platform_update_id=platform_update_s,
+                platform_message_id=platform_message_s,
+                session_id=session_id_s,
+                message_row_id=message_row_id,
+            )
+            now_ts = time.time()
+            conn.execute(
+                """
+                INSERT INTO platform_wake_traces (
+                    wake_id, platform, platform_update_id, platform_message_id,
+                    chat_id, chat_type, user_id, user_name, session_id,
+                    message_row_id, message_text, triggered_at,
+                    context_manifest, agent_persisted, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(wake_id) DO UPDATE SET
+                    platform_message_id = excluded.platform_message_id,
+                    chat_id = excluded.chat_id,
+                    chat_type = excluded.chat_type,
+                    user_id = excluded.user_id,
+                    user_name = excluded.user_name,
+                    session_id = excluded.session_id,
+                    message_row_id = excluded.message_row_id,
+                    message_text = excluded.message_text,
+                    triggered_at = excluded.triggered_at,
+                    context_manifest = excluded.context_manifest,
+                    agent_persisted = excluded.agent_persisted
+                """,
+                (
+                    wake_id,
+                    platform_s,
+                    platform_update_s,
+                    platform_message_s,
+                    chat_id_s,
+                    chat_type,
+                    user_id_s,
+                    user_name,
+                    session_id_s,
+                    message_row_id,
+                    message_text_s,
+                    triggered,
+                    context_json,
+                    1 if agent_persisted else 0,
+                    now_ts,
+                ),
+            )
+            return {
+                "wake_id": wake_id,
+                "session_id": session_id_s,
+                "message_row_id": message_row_id,
+            }
 
         return self._execute_write(_do)
 
@@ -3311,4 +3494,3 @@ class SessionDB:
                 (error[:500], session_id),
             )
         self._execute_write(_do)
-

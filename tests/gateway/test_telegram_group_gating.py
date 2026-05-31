@@ -227,6 +227,7 @@ def test_observed_group_context_uses_shared_source_and_prompt_for_later_mentions
 
 def test_observed_group_context_replays_as_current_message_context_not_user_turns():
     from gateway.run import (
+        _build_gateway_context_manifest,
         _build_gateway_agent_history,
         _wrap_current_message_with_observed_context,
     )
@@ -253,6 +254,17 @@ def test_observed_group_context_replays_as_current_message_context_not_user_turn
     assert "Acha que dá fazer estoque?" in api_message
     assert "Tem lote e vencimento" in api_message
     assert api_message.endswith("[Bob|222]\ncambio")
+
+    manifest = _build_gateway_context_manifest(
+        history,
+        channel_prompt="You are handling Telegram; observed Telegram group context is present.",
+    )
+    assert manifest["status"] == "observed_group_context"
+    assert manifest["loaded_count"] == 3
+    assert manifest["observed_count"] == 2
+    assert manifest["items"][0]["loaded_via"] == "observed_context_prefix"
+    assert manifest["items"][0]["observed"] is True
+    assert manifest["items"][-1]["loaded_via"] == "conversation_history"
 
 
 def test_observed_group_context_does_not_hide_current_user_turn_behind_history_offset():
