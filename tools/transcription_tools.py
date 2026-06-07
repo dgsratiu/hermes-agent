@@ -28,6 +28,7 @@ Usage::
 
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -95,6 +96,9 @@ XAI_STT_BASE_URL = os.getenv("XAI_STT_BASE_URL", "https://api.x.ai/v1")
 SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac"}
 LOCAL_NATIVE_AUDIO_FORMATS = {".wav", ".aiff", ".aif"}
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
+NEAR_SILENCE_MAX_VOLUME_DB = -55.0
+NEAR_SILENCE_MEAN_VOLUME_DB = -75.0
+LOW_CONFIDENCE_NO_SPEECH_PROBABILITY = 0.85
 
 # Known model sets for auto-correction
 OPENAI_MODELS = {"whisper-1", "gpt-4o-mini-transcribe", "gpt-4o-transcribe"}
@@ -1023,6 +1027,133 @@ def _validate_audio_file(file_path: str) -> Optional[Dict[str, Any]]:
 
     return None
 
+
+def _audio_unavailable_result(file_path: str, error: str, **metadata: Any) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "success": False,
+        "transcript": "",
+        "error": error,
+        "path": os.path.abspath(file_path),
+    }
+    result.update({k: v for k, v in metadata.items() if v is not None})
+    return result
+
+
+_FFMPEG_VOLUME_RE = re.compile(r"(mean|max)_volume:\s*(-?(?:inf|\d+(?:\.\d+)?))\s*dB")
+
+
+def _probe_audio_signal(file_path: str) -> Dict[str, Any]:
+    """Return ffmpeg volumedetect signal metadata.
+
+    Missing ffmpeg or probe failures are non-fatal. STT should still run on
+    hosts without ffmpeg rather than turning every voice message into a false
+    unavailable result.
+    """
+    ffmpeg = _find_ffmpeg_binary()
+    if not ffmpeg:
+        return {"available": False, "error": "ffmpeg not found"}
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-i",
+        file_path,
+        "-af",
+        "volumedetect",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+    output = f"{completed.stderr}\n{completed.stdout}"
+    values: Dict[str, float] = {}
+    for match in _FFMPEG_VOLUME_RE.finditer(output):
+        label, raw = match.groups()
+        values[f"{label}_volume_db"] = float("-inf") if raw == "-inf" else float(raw)
+
+    if completed.returncode != 0 and not values:
+        return {"available": False, "error": output.strip()[:300] or "ffmpeg probe failed"}
+
+    if not values:
+        return {"available": False, "error": "ffmpeg volumedetect produced no volume data"}
+
+    return {"available": True, **values}
+
+
+def _is_near_silent_signal(signal: Dict[str, Any]) -> bool:
+    if not signal.get("available"):
+        return False
+    max_volume = signal.get("max_volume_db")
+    mean_volume = signal.get("mean_volume_db")
+    if isinstance(max_volume, (int, float)) and max_volume <= NEAR_SILENCE_MAX_VOLUME_DB:
+        return True
+    if isinstance(mean_volume, (int, float)) and mean_volume <= NEAR_SILENCE_MEAN_VOLUME_DB:
+        return True
+    return False
+
+
+def _reject_near_silent_audio(file_path: str) -> Optional[Dict[str, Any]]:
+    signal = _probe_audio_signal(file_path)
+    if not _is_near_silent_signal(signal):
+        return None
+    return _audio_unavailable_result(
+        file_path,
+        (
+            "Audio signal is near silence; transcription unavailable "
+            "to avoid hallucinated speech."
+        ),
+        mean_volume_db=signal.get("mean_volume_db"),
+        max_volume_db=signal.get("max_volume_db"),
+    )
+
+
+def _finalize_transcription_result(file_path: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize successful provider results and reject empty hallucination-prone output."""
+    if not isinstance(result, dict):
+        return _audio_unavailable_result(file_path, "STT provider returned an invalid result")
+
+    result.setdefault("path", os.path.abspath(file_path))
+    if not result.get("success"):
+        return result
+
+    transcript = str(result.get("transcript") or "").strip()
+    if not transcript:
+        result.update(
+            _audio_unavailable_result(
+                file_path,
+                "STT returned an empty transcript; transcription unavailable.",
+                provider=result.get("provider"),
+            )
+        )
+        return result
+
+    result["transcript"] = transcript
+    no_speech_probability = result.get("no_speech_probability")
+    if (
+        isinstance(no_speech_probability, (int, float))
+        and no_speech_probability >= LOW_CONFIDENCE_NO_SPEECH_PROBABILITY
+    ):
+        result.update(
+            _audio_unavailable_result(
+                file_path,
+                "STT detected probable non-speech audio; transcription unavailable.",
+                provider=result.get("provider"),
+                no_speech_probability=no_speech_probability,
+            )
+        )
+    return result
+
 # ---------------------------------------------------------------------------
 # Provider: local (faster-whisper)
 # ---------------------------------------------------------------------------
@@ -1115,7 +1246,8 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
 
         try:
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            segment_list = list(segments)
+            transcript = " ".join(segment.text.strip() for segment in segment_list)
         except Exception as exc:
             # CUDA runtime libs sometimes only fail at dlopen-on-first-use,
             # AFTER the model loaded successfully.  Evict the broken cached
@@ -1135,14 +1267,30 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
             _local_model_name = model_name
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            segment_list = list(segments)
+            transcript = " ".join(segment.text.strip() for segment in segment_list)
 
         logger.info(
             "Transcribed %s via local whisper (%s, lang=%s, %.1fs audio)",
             Path(file_path).name, model_name, info.language, info.duration,
         )
 
-        return {"success": True, "transcript": transcript, "provider": "local"}
+        no_speech_probs = [
+            float(prob)
+            for prob in (
+                getattr(segment, "no_speech_prob", None)
+                for segment in segment_list
+            )
+            if isinstance(prob, (int, float))
+        ]
+        result: Dict[str, Any] = {
+            "success": True,
+            "transcript": transcript,
+            "provider": "local",
+        }
+        if no_speech_probs:
+            result["no_speech_probability"] = max(no_speech_probs)
+        return result
 
     except Exception as e:
         logger.error("Local transcription failed: %s", e, exc_info=True)
@@ -1526,6 +1674,10 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
     if error:
         return error
 
+    silent_error = _reject_near_silent_audio(file_path)
+    if silent_error:
+        return silent_error
+
     # Load config and determine provider
     stt_config = _load_stt_config()
     if not is_stt_enabled(stt_config):
@@ -1542,33 +1694,33 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         model_name = _normalize_local_model(
             model or local_cfg.get("model", DEFAULT_LOCAL_MODEL)
         )
-        return _transcribe_local(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_local(file_path, model_name))
 
     if provider == "local_command":
         local_cfg = stt_config.get("local", {})
         model_name = _normalize_local_command_model(
             model or local_cfg.get("model", DEFAULT_LOCAL_MODEL)
         )
-        return _transcribe_local_command(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_local_command(file_path, model_name))
 
     if provider == "groq":
         model_name = model or DEFAULT_GROQ_STT_MODEL
-        return _transcribe_groq(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_groq(file_path, model_name))
 
     if provider == "openai":
         openai_cfg = stt_config.get("openai", {})
         model_name = model or openai_cfg.get("model", DEFAULT_STT_MODEL)
-        return _transcribe_openai(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_openai(file_path, model_name))
 
     if provider == "mistral":
         mistral_cfg = stt_config.get("mistral", {})
         model_name = model or mistral_cfg.get("model", DEFAULT_MISTRAL_STT_MODEL)
-        return _transcribe_mistral(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_mistral(file_path, model_name))
 
     if provider == "xai":
         # xAI Grok STT doesn't use a model parameter — pass through for logging
         model_name = model or "grok-stt"
-        return _transcribe_xai(file_path, model_name)
+        return _finalize_transcription_result(file_path, _transcribe_xai(file_path, model_name))
 
     # User-declared command-type provider
     # (``stt.providers.<name>: type: command``). Fires after the built-in
@@ -1578,12 +1730,15 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
     # local than a plugin install (same precedence rule as TTS PR #17843).
     command_provider_config = _resolve_command_stt_provider_config(provider, stt_config)
     if command_provider_config is not None:
-        return _transcribe_command_stt(
+        return _finalize_transcription_result(
             file_path,
-            provider,
-            command_provider_config,
-            stt_config,
-            model_override=model,
+            _transcribe_command_stt(
+                file_path,
+                provider,
+                command_provider_config,
+                stt_config,
+                model_override=model,
+            ),
         )
 
     # Plugin-registered STT backend (e.g. OpenRouter, SenseAudio,
@@ -1610,7 +1765,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         language=plugin_language,
     )
     if plugin_result is not None:
-        return plugin_result
+        return _finalize_transcription_result(file_path, plugin_result)
 
     # No provider available
     return {

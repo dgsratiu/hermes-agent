@@ -6,6 +6,7 @@ end-to-end dispatch.  All external dependencies are mocked.
 """
 
 import os
+import shutil
 import sys
 import struct
 import subprocess
@@ -822,6 +823,76 @@ class TestValidateAudioFileEdgeCases:
 # ============================================================================
 
 class TestTranscribeAudioDispatch:
+    def test_near_silent_audio_is_rejected_before_provider_call(self, sample_ogg):
+        with patch("tools.transcription_tools._probe_audio_signal", return_value={
+            "available": True,
+            "mean_volume_db": -91.0,
+            "max_volume_db": -91.0,
+        }), \
+             patch("tools.transcription_tools._load_stt_config", return_value={"provider": "openai"}), \
+             patch("tools.transcription_tools._get_provider", return_value="openai"), \
+             patch("tools.transcription_tools._transcribe_openai",
+                   side_effect=AssertionError("near-silent audio must not reach STT provider")):
+            from tools.transcription_tools import transcribe_audio
+            result = transcribe_audio(sample_ogg)
+
+        assert result["success"] is False
+        assert result["transcript"] == ""
+        assert "near silence" in result["error"]
+        assert result["path"] == os.path.abspath(sample_ogg)
+        assert result["mean_volume_db"] == -91.0
+        assert result["max_volume_db"] == -91.0
+
+    def test_empty_successful_provider_result_is_rejected(self, sample_ogg):
+        with patch("tools.transcription_tools._probe_audio_signal", return_value={"available": False}), \
+             patch("tools.transcription_tools._load_stt_config", return_value={"provider": "openai"}), \
+             patch("tools.transcription_tools._get_provider", return_value="openai"), \
+             patch("tools.transcription_tools._transcribe_openai",
+                   return_value={"success": True, "transcript": "   ", "provider": "openai"}):
+            from tools.transcription_tools import transcribe_audio
+            result = transcribe_audio(sample_ogg)
+
+        assert result["success"] is False
+        assert result["transcript"] == ""
+        assert "empty transcript" in result["error"]
+        assert result["path"] == os.path.abspath(sample_ogg)
+
+    def test_real_silent_ogg_is_rejected_before_provider_call(self, tmp_path):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            pytest.skip("ffmpeg is required to generate a real silent OGG")
+
+        silent_ogg = tmp_path / "silent.ogg"
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=48000:cl=mono",
+                "-t",
+                "1.0",
+                "-c:a",
+                "libopus",
+                str(silent_ogg),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        with patch("tools.transcription_tools._load_stt_config", return_value={"provider": "openai"}), \
+             patch("tools.transcription_tools._get_provider", return_value="openai"), \
+             patch("tools.transcription_tools._transcribe_openai",
+                   side_effect=AssertionError("silent OGG must not reach STT provider")):
+            from tools.transcription_tools import transcribe_audio
+            result = transcribe_audio(str(silent_ogg))
+
+        assert result["success"] is False
+        assert "near silence" in result["error"]
+        assert result["max_volume_db"] <= -55.0
+
     def test_dispatches_to_groq(self, sample_ogg):
         with patch("tools.transcription_tools._load_stt_config", return_value={"provider": "groq"}), \
              patch("tools.transcription_tools._get_provider", return_value="groq"), \

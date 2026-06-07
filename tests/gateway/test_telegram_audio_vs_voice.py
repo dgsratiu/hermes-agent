@@ -191,10 +191,42 @@ async def test_voice_message_does_not_echo_failed_transcription():
             event=event,
             source=source,
             history=[],
+    )
+
+    adapter.send.assert_not_awaited()
+    assert "transcription is unavailable" in result
+    assert "/tmp/voice.ogg" in result
+
+
+@pytest.mark.asyncio
+async def test_voice_message_does_not_inject_empty_successful_transcript():
+    """Blank STT responses must not become successful voice transcript context."""
+    runner = _make_runner(stt_enabled=True)
+    source = SessionSource(platform=Platform.TELEGRAM, chat_id="1", chat_type="dm")
+    event = _voice_event("/tmp/silent.ogg")
+    adapter = MagicMock()
+    adapter.send = AsyncMock(return_value=True)
+    runner.adapters = {Platform.TELEGRAM: adapter}
+
+    with patch(
+        "tools.transcription_tools.transcribe_audio",
+        return_value={
+            "success": True,
+            "transcript": "  ",
+            "provider": "openai",
+            "path": "/tmp/silent.ogg",
+        },
+    ):
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
         )
 
     adapter.send.assert_not_awaited()
-    assert "trouble transcribing" in result
+    assert "Here's what they said" not in result
+    assert "transcription is unavailable" in result
+    assert "/tmp/silent.ogg" in result
 
 
 # ---------------------------------------------------------------------------
