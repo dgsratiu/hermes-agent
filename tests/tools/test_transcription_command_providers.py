@@ -487,7 +487,8 @@ class TestTranscribeAudioDispatchToCommandProvider:
         cfg = self._config_with_command_provider(
             "fake-cli", _python_emit_command("dispatched via command")
         )
-        with patch("tools.transcription_tools._load_stt_config", return_value=cfg):
+        with patch("tools.transcription_tools._probe_audio_signal", return_value={"available": False}), \
+             patch("tools.transcription_tools._load_stt_config", return_value=cfg):
             result = transcribe_audio(str(audio))
         assert result["success"] is True
         assert result["transcript"] == "dispatched via command"
@@ -514,7 +515,8 @@ class TestTranscribeAudioDispatchToCommandProvider:
     def test_unknown_provider_no_command_falls_through_to_error(self, tmp_path):
         audio = _make_silent_wav(tmp_path / "audio.wav")
         cfg = {"provider": "unknown-cli"}
-        with patch("tools.transcription_tools._load_stt_config", return_value=cfg):
+        with patch("tools.transcription_tools._probe_audio_signal", return_value={"available": False}), \
+             patch("tools.transcription_tools._load_stt_config", return_value=cfg):
             result = transcribe_audio(str(audio))
         assert result["success"] is False
         assert "No STT provider available" in result["error"]
@@ -565,7 +567,8 @@ class TestCommandWinsOverPlugin:
         _reset_for_tests()
         try:
             register_provider(FakePlugin())
-            with patch("tools.transcription_tools._load_stt_config", return_value=cfg):
+            with patch("tools.transcription_tools._probe_audio_signal", return_value={"available": False}), \
+                 patch("tools.transcription_tools._load_stt_config", return_value=cfg):
                 result = transcribe_audio(str(audio))
         finally:
             _reset_for_tests()
@@ -598,7 +601,8 @@ class TestCommandWinsOverPlugin:
         _reset_for_tests()
         try:
             register_provider(FakePlugin())
-            with patch("tools.transcription_tools._load_stt_config", return_value=cfg):
+            with patch("tools.transcription_tools._probe_audio_signal", return_value={"available": False}), \
+                 patch("tools.transcription_tools._load_stt_config", return_value=cfg):
                 result = transcribe_audio(str(audio))
         finally:
             _reset_for_tests()

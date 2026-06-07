@@ -15098,16 +15098,17 @@ class GatewayRunner:
             try:
                 logger.debug("Transcribing user voice: %s", path)
                 result = await asyncio.to_thread(transcribe_audio, path)
-                if result["success"]:
-                    transcript = result["transcript"]
+                if result["success"] and str(result.get("transcript") or "").strip():
+                    transcript = str(result["transcript"]).strip()
                     if transcribed_texts is not None:
-                        transcribed_texts.append(str(transcript))
+                        transcribed_texts.append(transcript)
                     enriched_parts.append(
                         f'[The user sent a voice message~ '
                         f'Here\'s what they said: "{transcript}"]'
                     )
                 else:
                     error = result.get("error", "unknown error")
+                    abs_path = os.path.abspath(str(result.get("path") or path))
                     if (
                         "No STT provider" in error
                         or error.startswith("Neither VOICE_TOOLS_OPENAI_KEY nor OPENAI_API_KEY is set")
@@ -15128,8 +15129,8 @@ class GatewayRunner:
                         enriched_parts.append(_no_stt_note)
                     else:
                         enriched_parts.append(
-                            "[The user sent a voice message but I had trouble "
-                            f"transcribing it~ ({error})]"
+                            "[The user sent a voice message, but transcription "
+                            f"is unavailable for this audio: {abs_path}. ({error})]"
                         )
             except Exception as e:
                 logger.error("Transcription error: %s", e)
