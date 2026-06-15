@@ -957,6 +957,92 @@ class TestDeliverCrossPlatformThreadId:
         )
 
 
+# ===================================================================
+# Cross-platform delivery: keyed live-edit (status_key)
+# ===================================================================
+
+
+class TestDeliverCrossPlatformStatusKey:
+    """Tests for status_key send-or-edit routing in _deliver_cross_platform.
+
+    When a route supplies ``deliver_extra.status_key`` and the target adapter
+    implements ``send_or_update_status``, delivery edits one keyed message in
+    place instead of appending a fresh one. Absent the key or the capability,
+    it falls back to a plain ``send``.
+    """
+
+    def _setup(self, *, supports_status: bool = True):
+        adapter = _make_adapter()
+        if supports_status:
+            mock_target = AsyncMock()
+            mock_target.send_or_update_status = AsyncMock(
+                return_value=SendResult(success=True, message_id="42")
+            )
+        else:
+            # spec restricts attributes so hasattr(..., "send_or_update_status")
+            # is False — models an adapter without the capability.
+            mock_target = AsyncMock(spec=["send"])
+        mock_target.send = AsyncMock(return_value=SendResult(success=True))
+
+        mock_runner = MagicMock()
+        mock_runner.adapters = {Platform("telegram"): mock_target}
+        mock_runner.config.get_home_channel.return_value = None
+
+        adapter.gateway_runner = mock_runner
+        return adapter, mock_target
+
+    @pytest.mark.asyncio
+    async def test_status_key_routes_to_send_or_update_status(self):
+        """status_key delivery calls send_or_update_status, not send."""
+        adapter, mock_target = self._setup()
+        delivery = {
+            "deliver_extra": {
+                "chat_id": "12345",
+                "status_key": "meetage:abc-defg-hij",
+            }
+        }
+        await adapter._deliver_cross_platform("telegram", "Presence: 2", delivery)
+        mock_target.send_or_update_status.assert_awaited_once_with(
+            "12345", "meetage:abc-defg-hij", "Presence: 2", metadata=None
+        )
+        mock_target.send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_status_key_passes_thread_metadata(self):
+        """thread_id still threads through on the keyed-edit path."""
+        adapter, mock_target = self._setup()
+        delivery = {
+            "deliver_extra": {
+                "chat_id": "12345",
+                "status_key": "k",
+                "thread_id": "7",
+            }
+        }
+        await adapter._deliver_cross_platform("telegram", "x", delivery)
+        mock_target.send_or_update_status.assert_awaited_once_with(
+            "12345", "k", "x", metadata={"thread_id": "7"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_status_key_uses_plain_send(self):
+        """Without status_key, delivery uses the normal send path."""
+        adapter, mock_target = self._setup()
+        delivery = {"deliver_extra": {"chat_id": "12345"}}
+        await adapter._deliver_cross_platform("telegram", "x", delivery)
+        mock_target.send.assert_awaited_once_with("12345", "x", metadata=None)
+        mock_target.send_or_update_status.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_adapter_without_capability_falls_back_to_send(self):
+        """An adapter lacking send_or_update_status falls back to send."""
+        adapter, mock_target = self._setup(supports_status=False)
+        delivery = {
+            "deliver_extra": {"chat_id": "12345", "status_key": "k"}
+        }
+        await adapter._deliver_cross_platform("telegram", "x", delivery)
+        mock_target.send.assert_awaited_once_with("12345", "x", metadata=None)
+
+
 class TestInsecureNoAuthSafetyRail:
     """connect() refuses to start when INSECURE_NO_AUTH is combined with a
     non-loopback bind. Guards against accidentally exposing an unauthenticated
