@@ -160,3 +160,56 @@ async def test_distinct_chat_ids_do_not_collide(adapter):
     adapter.edit_message.assert_not_awaited()
     assert adapter._status_message_ids[("chat-1", "lifecycle")] == "100"
     assert adapter._status_message_ids[("chat-2", "lifecycle")] == "200"
+
+
+# ---------------------------------------------------------------------------
+# [[live:KEY]] marker on send() routes to send_or_update_status so an agent's
+# own reply becomes a keyed live message (one bubble, edited in place later).
+# ---------------------------------------------------------------------------
+
+
+def _marker_adapter(monkeypatch):
+    _install_fake_telegram(monkeypatch)
+    from gateway.platforms.telegram import TelegramAdapter
+
+    a = TelegramAdapter(PlatformConfig(enabled=True, token="fake-token"))
+    a._bot = MagicMock()
+    a.send_or_update_status = AsyncMock(
+        return_value=SendResult(success=True, message_id="55")
+    )
+    return a
+
+
+@pytest.mark.asyncio
+async def test_send_live_marker_routes_to_status(monkeypatch):
+    a = _marker_adapter(monkeypatch)
+    res = await a.send(
+        "chat-1",
+        "[[live:meetage:abc-defg-hij]]https://meet.google.com/abc-defg-hij\n\nPresence: no one in yet",
+        metadata={"thread_id": "7"},
+    )
+    assert res.message_id == "55"
+    a.send_or_update_status.assert_awaited_once_with(
+        "chat-1",
+        "meetage:abc-defg-hij",
+        "https://meet.google.com/abc-defg-hij\n\nPresence: no one in yet",
+        metadata={"thread_id": "7"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_live_marker_strips_one_following_newline(monkeypatch):
+    a = _marker_adapter(monkeypatch)
+    await a.send("chat-1", "[[live:k]]\nbody line")
+    a.send_or_update_status.assert_awaited_once_with(
+        "chat-1", "k", "body line", metadata=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_empty_key_marker_not_routed(monkeypatch):
+    a = _marker_adapter(monkeypatch)
+    # Malformed (empty key) must NOT route; whitespace body returns early so
+    # the real send path is not exercised.
+    await a.send("chat-1", "   ")
+    a.send_or_update_status.assert_not_awaited()

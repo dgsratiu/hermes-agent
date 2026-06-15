@@ -1697,6 +1697,26 @@ class TelegramAdapter(BasePlatformAdapter):
         if getattr(self, "_send_path_degraded", False):
             return SendResult(success=False, error="send_path_degraded", retryable=True)
 
+        # Live keyed-message marker. A reply that opens with ``[[live:KEY]]`` is
+        # delivered through send_or_update_status under that key, so the message
+        # is editable in place on later sends with the same key. This lets an
+        # agent's OWN reply become a single live message that an external poller
+        # keeps editing (e.g. Meet presence) — no separate bubble, no duplicate.
+        # The marker is stripped before sending; the stripped body is what goes
+        # to send_or_update_status (whose inner send() sees no marker, so there
+        # is no recursion). Malformed markers fall through to a normal send.
+        if content and content.lstrip().startswith("[[live:"):
+            _s = content.lstrip()
+            _end = _s.find("]]")
+            _live_key = _s[len("[[live:"):_end].strip() if _end > len("[[live:") else ""
+            if _live_key:
+                _live_body = _s[_end + 2:]
+                if _live_body.startswith("\n"):
+                    _live_body = _live_body[1:]
+                return await self.send_or_update_status(
+                    chat_id, _live_key, _live_body, metadata=metadata,
+                )
+
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():
             return SendResult(success=True, message_id=None)
