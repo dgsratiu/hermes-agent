@@ -922,4 +922,19 @@ class WebhookAdapter(BasePlatformAdapter):
         if thread_id:
             metadata = {"thread_id": thread_id}
 
+        # Keyed live-edit delivery: when the route supplies a ``status_key`` and
+        # the target adapter supports send-or-edit, deliver by editing the same
+        # message in place instead of appending a fresh bubble. This lets an
+        # external caller fire the same route repeatedly (e.g. a poller posting
+        # every N seconds with a stable status_key) to maintain a single
+        # live-updating message — Meet presence counters, deploy progress, etc.
+        # The (chat_id, status_key) tuple is the durable handle; the adapter
+        # owns the message id. Falls back to a normal send when the key is
+        # absent or the adapter lacks the capability.
+        status_key = extra.get("status_key")
+        if status_key and hasattr(adapter, "send_or_update_status"):
+            return await adapter.send_or_update_status(
+                chat_id, str(status_key), content, metadata=metadata
+            )
+
         return await adapter.send(chat_id, content, metadata=metadata)
